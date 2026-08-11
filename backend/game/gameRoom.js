@@ -12,13 +12,14 @@ const PHASE = {
   NIGHT: 'NIGHT',
   DAY_DISCUSSION: 'DAY_DISCUSSION',
   DAY_VOTE: 'DAY_VOTE',
-  EXECUTION: 'EXECUTION',
+  PENDING_EXECUTION: 'PENDING_EXECUTION',
   RESULTS: 'RESULTS',
 };
 
 const NIGHT_DURATION_MS = 45_000;
 const DISCUSSION_DURATION_MS = 90_000;
 const VOTE_DURATION_MS = 30_000;
+const PENDING_EXECUTION_DURATION_MS = 15_000; // Gizli Prenses'in kartını açması için tanınan süre
 
 class GameRoom {
   constructor(roomCode, io) {
@@ -31,6 +32,7 @@ class GameRoom {
     this.nightActions = {};       // bu gece toplanan aksiyonlar { actorRole: {...} }
     this.votes = {};              // { voterUserId: targetUserId|null }
     this.princessRevealUsed = false;
+    this.pendingExecutionTargetUserId = null;
     this.shadowLeaderQueryUsed = false;
     this.poisonerUsed = false;
     this.doctorAntidoteUsed = false;
@@ -42,6 +44,14 @@ class GameRoom {
 
   // ---------- LOBİ ----------
   addPlayer(userId, username, socketId) {
+    // Aynı kullanıcı zaten odadaysa (örn. lobi sayfasından oda sayfasına geçişte
+    // ikinci bir 'joinRoom' tetiklenmesi ya da sayfa yenileme) yinelenen koltuk
+    // açmak yerine sadece socket bağlantısını güncelle.
+    const existing = this.players.find((p) => p.userId === userId);
+    if (existing) {
+      existing.socketId = socketId;
+      return this.getPublicState();
+    }
     if (this.players.length >= 8) throw new Error('Oda dolu.');
     if (!this.hostUserId) this.hostUserId = userId;
     this.players.push({ userId, username, socketId, role: null, team: null, isAlive: true });
@@ -234,24 +244,39 @@ class GameRoom {
     const isTie = sorted.length > 1 && sorted[1][1] === topVotes;
     if (isTie) return this._goToNightAfterExecution();
 
-    this._executePlayer(topUserId);
+    this._goToPendingExecution(topUserId);
+  }
+
+  // İdam kesinleşmeden önceki kısa bekleme penceresi: hedef, Gizli Prenses ise
+  // ve henüz kartını açmadıysa, bu süre içinde claimPrincess çağırıp idamı iptal edebilir.
+  _goToPendingExecution(targetUserId) {
+    this.phase = PHASE.PENDING_EXECUTION;
+    this.pendingExecutionTargetUserId = targetUserId;
+    this.io.to(this.roomCode).emit('pendingExecution', { targetUserId });
+    this._setPhaseTimer(PENDING_EXECUTION_DURATION_MS, () => this._executePlayer(targetUserId));
   }
 
   // Gizli Prenses'in idam iptal mekaniği: idam edilecek kişi Prenses ise
   // ve kartını açmayı seçerse (client 'claimPrincess' event'i) idam iptal edilir.
-  claimPrincess(userId, pendingExecutionTargetUserId) {
+  claimPrincess(userId) {
+    if (this.phase !== PHASE.PENDING_EXECUTION) {
+      return { ok: false, reason: 'Şu an idam bekleme aşamasında değiliz.' };
+    }
     if (this.princessRevealUsed) return { ok: false, reason: 'Bu güç zaten kullanıldı.' };
     const player = this.players.find((p) => p.userId === userId);
     if (!player || player.role !== ROLE.GIZLI_PRENSES) return { ok: false, reason: 'Sen Prenses değilsin.' };
-    if (userId !== pendingExecutionTargetUserId) return { ok: false, reason: 'Sıra sende değil.' };
+    if (userId !== this.pendingExecutionTargetUserId) return { ok: false, reason: 'Sıra sende değil.' };
 
     this.princessRevealUsed = true;
+    clearTimeout(this.timer);
+    this.pendingExecutionTargetUserId = null;
     this.io.to(this.roomCode).emit('princessRevealed', { userId });
     this._goToNightAfterExecution(); // idam iptal, gece kaldı
     return { ok: true };
   }
 
   _executePlayer(userId) {
+    this.pendingExecutionTargetUserId = null;
     const player = this.players.find((p) => p.userId === userId);
     if (player) {
       player.isAlive = false;

@@ -52,6 +52,7 @@ Bağlantı kimlik doğrulaması `io.use()` middleware'inde JWT ile yapılır (bk
 | `abilityResult` | Özel yetenek sonucu (casus, sorgu) — sadece ilgili oyuncuya | `{ abilityKey, targetUserId, result }` |
 | `nightResult` | Sabah, gece ölümleri herkese açıklanır | `{ deaths: [{ userId, cause }] }` |
 | `voteUpdate` | Oylama anlık sayımı | `{ votes: { userId: oySayisi } }` |
+| `pendingExecution` | Oylama bitti, idam kesinleşmeden önce ~15 sn'lik bekleme penceresi başladı | `{ targetUserId }` |
 | `executionResult` | İdam sonucu ve rol ifşası | `{ userId, roleReveal }` |
 | `princessRevealed` | Prenses kartını açtı, idam iptal | `{ userId }` |
 | `gameEnded` | Maç bitti | `{ winningTeam, roleReveal }` |
@@ -98,6 +99,12 @@ Son olarak her rolün toplam puanı, o rolün ortalama risk/sorumluluk seviyesin
 
 Örnek hesap: İyiler kazandı, Gizli Prenses hayatta kaldı → (2 katılım + 20 takım galibiyeti + 3 hayatta kalma + 10 prenses bonusu) × 1.3 = 35 × 1.3 ≈ **46 puan**. Taht Taliplisi tek başına kazandı ve hayatta kaldı → (2 + 50 + 3) × 1.0 = **55 puan**.
 
-## 7. Sıradaki Adımlar
+## 7. Frontend (Next.js)
 
-Taslak kod, mimarinin iskeletini doğru kurmak için yazıldı; production'a almadan önce şu noktalar tamamlanmalı: reconnect/disconnect durumunda oyuncunun oyuna geri dönebilmesi (şu an `server.js` içinde yorum olarak işaretli), Agora/Daily.co için sunucu taraflı kanal token'ı üretimi (güvenlik), gece fazı yetenek sırası çakışmalarının (örn. Zehirbaz'ın kilitlediği rolün aynı gece aksiyon göndermeye çalışması) daha kapsamlı test edilmesi, ve `game_events` tablosunun gerçekten her aksiyonda yazılması (taslakta sadece şema var, `server.js`/`gameRoom.js` içine `INSERT` çağrıları eklenmeli).
+`frontend/` klasöründe çalışan bir Next.js (App Router) istemcisi var: kayıt/giriş sayfaları (`app/login`, `app/register`), lobi (`app/lobby`) ve oyunun tamamının oynandığı oda ekranı (`app/room/[roomCode]`). Oda ekranı, backend'in yayınladığı tüm Socket.io event'lerini dinler ve role göre gece yeteneği formunu (Muhafız/Hekim/Casus/Gölge Lider/Zehirbaz) dinamik olarak gösterir. `lib/socket.js` tek bir Socket.io bağlantısını (singleton) yönetir, `lib/auth.js` JWT'yi tarayıcıda saklar. Vercel'e deploy ederken `NEXT_PUBLIC_BACKEND_URL` ortam değişkenini Render'daki backend URL'ine ayarlamak gerekiyor.
+
+Not: İdam mekaniği başlangıçtaki taslakta doğrudan oylama biter bitmez idam ediyordu; Gizli Prenses'in kartını açıp iptal edebilmesi için bir ara faz (`PENDING_EXECUTION`, ~15 sn) eklendi — oylama bitince önce bu faza geçilir, hedef Prenses ise ve süresi içinde `claimPrincess` gönderirse idam iptal olur, göndermezse süre sonunda otomatik idam gerçekleşir.
+
+## 8. Sıradaki Adımlar
+
+Production'a almadan önce şu noktalar tamamlanmalı: reconnect/disconnect durumunda oyuncunun oyuna geri dönebilmesi (sayfa yenilendiğinde `joinRoom` tekrar gönderiliyor; lobi fazında artık güvenli — bkz. `addPlayer`'daki idempotent kontrol — ama oyun ortasında sayfa yenilemesi hâlâ "Oyun zaten başladı" hatasına düşer), Agora/Daily.co için sunucu taraflı kanal token'ı üretimi (güvenlik), gece fazı yetenek sırası çakışmalarının (örn. Zehirbaz'ın kilitlediği rolün aynı gece aksiyon göndermeye çalışması) daha kapsamlı test edilmesi, ve `game_events` tablosunun gerçekten her aksiyonda yazılması (taslakta sadece şema var, `server.js`/`gameRoom.js` içine `INSERT` çağrıları eklenmeli).

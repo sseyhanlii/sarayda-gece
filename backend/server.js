@@ -196,10 +196,10 @@ io.on('connection', (socket) => {
   });
 
   // ---- GİZLİ PRENSES KART AÇMA ----
-  socket.on('claimPrincess', ({ pendingExecutionTargetUserId }) => {
+  socket.on('claimPrincess', () => {
     const room = activeRooms.get(socket.data.roomCode);
     if (!room) return;
-    const result = room.claimPrincess(userId, pendingExecutionTargetUserId);
+    const result = room.claimPrincess(userId);
     if (!result.ok) socket.emit('error', { message: result.reason });
   });
 
