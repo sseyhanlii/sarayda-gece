@@ -14,6 +14,7 @@ import {
   NIGHT_ACTION_ROLES,
   ASSASSIN_TEAM_ROLES,
   getPlayerColor,
+  resolveRoleLabels,
 } from '../../../lib/roles';
 import SeatTable from '../../../components/SeatTable';
 import { useVoiceChat } from '../../../lib/voice';
@@ -75,6 +76,10 @@ export default function RoomPage() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [durations, setDurations] = useState(FALLBACK_PHASE_DURATIONS);
+  // Owner admin panelinden rollerin görünen ismini değiştirebiliyor — oda içindeki
+  // her yerde (rol kartı, takım arkadaşı listesi, idam sonucu, alttaki rol bilgisi
+  // kartı) sabit ROLE_LABELS yerine bu, sunucudan gelen etiketler kullanılır.
+  const [roleLabels, setRoleLabels] = useState(ROLE_LABELS);
   const [teammates, setTeammates] = useState(null); // vampir takım arkadaşları (bkz. teammatesRevealed)
   const [loverInfo, setLoverInfo] = useState(null); // Aşko'nun eşleştirdiği aşk çifti (bkz. loverRevealed)
 
@@ -84,14 +89,15 @@ export default function RoomPage() {
   // güncel değerleri çek (backend'e erişilemezse yukarıdaki yedeklerle devam et).
   useEffect(() => {
     fetchPublicSettings()
-      .then((s) =>
+      .then((s) => {
         setDurations({
           NIGHT: Math.round(s.nightDurationMs / 1000),
           DAY_DISCUSSION: Math.round(s.dayDurationMs / 1000),
           DAY_VOTE: Math.round(s.voteDurationMs / 1000),
           PENDING_EXECUTION: 15,
-        })
-      )
+        });
+        setRoleLabels(resolveRoleLabels(s.roleLabels));
+      })
       .catch(() => {});
   }, []);
 
@@ -329,7 +335,7 @@ export default function RoomPage() {
               return (
                 <li key={p.userId} className={!p.isAlive ? 'dead' : ''}>
                   <span style={{ color: getPlayerColor(p.userId) }}>{player?.username || p.userId}</span>
-                  <span className="badge">{ROLE_LABELS[p.role]}</span>
+                  <span className="badge">{roleLabels[p.role]}</span>
                 </li>
               );
             })}
@@ -460,7 +466,7 @@ export default function RoomPage() {
 
       {myRole && phase !== 'LOBBY' && (
         <div className="card role-card">
-          <h2>{ROLE_LABELS[myRole]}</h2>
+          <h2>{roleLabels[myRole]}</h2>
           <p className="small">{ROLE_DESCRIPTIONS[myRole]}</p>
           <span className="badge">{TEAM_LABELS[myTeam]}</span>
         </div>
@@ -475,7 +481,7 @@ export default function RoomPage() {
             {teammates.map((t) => (
               <li key={t.userId}>
                 <span style={{ color: getPlayerColor(t.userId) }}>{t.username}</span>
-                <span className="badge">{ROLE_LABELS[t.role]}</span>
+                <span className="badge">{roleLabels[t.role]}</span>
               </li>
             ))}
           </ul>
@@ -549,7 +555,7 @@ export default function RoomPage() {
         <div className="card center">
           <p>
             <strong>{players.find((p) => p.userId === lastExecution.userId)?.username}</strong> idam edildi. Rolü:{' '}
-            <span className="badge">{ROLE_LABELS[lastExecution.roleReveal] || '?'}</span>
+            <span className="badge">{roleLabels[lastExecution.roleReveal] || '?'}</span>
           </p>
           {lastExecution.extraDeaths?.length > 0 && (
             <p className="small" style={{ marginTop: 6 }}>
@@ -584,7 +590,7 @@ export default function RoomPage() {
         <ul>
           {activeRoleSet.map((key) => (
             <li key={key}>
-              <strong>{ROLE_LABELS[key]}</strong> — {ROLE_DESCRIPTIONS[key]}
+              <strong>{roleLabels[key]}</strong> — {ROLE_DESCRIPTIONS[key]}
             </li>
           ))}
         </ul>
@@ -858,7 +864,7 @@ function AssassinNightPanel({ myRole, othersAlive, assassinVoteTally, roomRoleSe
                   <option value="">Seç...</option>
                   {lockableRoles.map((key) => (
                     <option key={key} value={key}>
-                      {ROLE_LABELS[key]}
+                      {roleLabels[key]}
                     </option>
                   ))}
                 </select>

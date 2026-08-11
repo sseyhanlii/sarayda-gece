@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { fetchLeaderboard, fetchRoleLeaderboard, fetchMyProfile, deleteUserAccount } from '../../lib/api';
-import { ROLE_LABELS, ALL_ROLE_KEYS } from '../../lib/roles';
+import { fetchLeaderboard, fetchRoleLeaderboard, fetchMyProfile, deleteUserAccount, fetchPublicSettings } from '../../lib/api';
+import { ROLE_LABELS, ALL_ROLE_KEYS, resolveRoleLabels } from '../../lib/roles';
 import { getToken, isLoggedIn } from '../../lib/auth';
 import NavBar from '../../components/NavBar';
 
@@ -14,6 +14,9 @@ export default function LeaderboardPage() {
   // Owner (ya da "delete_users" izni verilmiş bir admin) sıralamadan direkt
   // hesap silebilsin diye — normal kullanıcılar bu düğmeyi hiç görmez.
   const [canDelete, setCanDelete] = useState(false);
+  // Owner admin panelinden rol isimlerini değiştirebiliyor — rol bazlı sıralama
+  // başlıkları da sabit ROLE_LABELS yerine güncel etiketleri göstermeli.
+  const [roleLabels, setRoleLabels] = useState(ROLE_LABELS);
 
   function loadLeaderboard() {
     setLoading(true);
@@ -28,6 +31,9 @@ export default function LeaderboardPage() {
 
   useEffect(() => {
     loadLeaderboard();
+    fetchPublicSettings()
+      .then((s) => setRoleLabels(resolveRoleLabels(s.roleLabels)))
+      .catch(() => {});
     if (isLoggedIn()) {
       fetchMyProfile(getToken())
         .then((profile) => {
@@ -92,7 +98,7 @@ export default function LeaderboardPage() {
               ) : (
                 ALL_ROLE_KEYS.filter((key) => byRole[key]?.length).map((key) => (
                   <div key={key} style={{ marginBottom: 16 }}>
-                    <h4 style={{ margin: '0 0 6px', color: 'var(--accent)' }}>{ROLE_LABELS[key]}</h4>
+                    <h4 style={{ margin: '0 0 6px', color: 'var(--accent)' }}>{roleLabels[key]}</h4>
                     <ul className="player-list">
                       {byRole[key].map((row, i) => (
                         <li key={row.username + i}>

@@ -1,26 +1,30 @@
-@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@600;700&family=Fredoka:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
 
 /* ============================================================
-   Pembeli Masallar Diyarı teması 🎀✨
-   Saray artık koyu/gotik değil — pastel pembe, leylak ve altın
-   yaldızlı, peri masalı hissi veren aydınlık bir tema.
+   Turkuaz Masallar Diyarı teması 🏰🌊
+   Saray pastel turkuaz/deniz-yeşili ve altın yaldızlı, peri masalı
+   hissi veren aydınlık bir tema kullanır. Yazı tipi okunaklılık için
+   sade, modern bir sans-serif (Poppins) — eski süslü kombinasyon
+   (Fredoka + Dancing Script) kaldırıldı.
+   NOT: --shadow-pink değişken adı tarihsel olarak kaldı (çok yerde
+   referans veriliyor) ama DEĞERİ artık turkuaz tonlu bir gölge.
    ============================================================ */
 
 :root {
-  --bg: #ffe4f1;
-  --bg-2: #ffd0e8;
-  --panel: #fff6fb;
-  --panel-light: #ffeaf5;
-  --accent: #ff5fa2;
-  --accent-2: #ff8fc2;
-  --accent-soft: #ffc2e0;
+  --bg: #dff7f4;
+  --bg-2: #bdeee6;
+  --panel: #f5fffd;
+  --panel-light: #e7fbf7;
+  --accent: #0fa89c;
+  --accent-2: #2dd4c4;
+  --accent-soft: #b7ece4;
   --gold: #e8a83c;
-  --text: #5a2350;
-  --text-dim: #9a6c92;
-  --danger: #e0447b;
-  --danger-soft: #ffd3e4;
-  --good: #3fae7a;
-  --shadow-pink: rgba(255, 95, 162, 0.28);
+  --text: #103b38;
+  --text-dim: #5c8783;
+  --danger: #d6455f;
+  --danger-soft: #ffd8de;
+  --good: #2f9e6e;
+  --shadow-pink: rgba(15, 168, 156, 0.28);
 }
 
 * {
@@ -67,11 +71,6 @@
   animation: popIn 0.25s ease both;
 }
 
-h1::before, h1::after {
-  display: inline-block;
-  animation: floatSparkle 2.4s ease-in-out infinite;
-}
-
 .phase-banner.night {
   animation: twinkleNight 3s ease-in-out infinite;
 }
@@ -86,10 +85,10 @@ h1::before, h1::after {
 
 body {
   margin: 0;
-  background: radial-gradient(circle at 15% 0%, #fff0f8 0%, var(--bg) 45%, var(--bg-2) 100%);
+  background: radial-gradient(circle at 15% 0%, #f0fffb 0%, var(--bg) 45%, var(--bg-2) 100%);
   background-attachment: fixed;
   color: var(--text);
-  font-family: 'Fredoka', 'Segoe UI', sans-serif;
+  font-family: 'Poppins', 'Segoe UI', sans-serif;
   min-height: 100vh;
   position: relative;
 }
@@ -196,23 +195,16 @@ a {
 }
 
 h1, h2, h3 {
-  font-family: 'Dancing Script', cursive;
-  letter-spacing: 0.5px;
+  font-family: 'Poppins', 'Segoe UI', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.2px;
 }
 
 h1 {
   text-align: center;
   color: var(--accent);
-  font-size: 2.6rem;
+  font-size: 2.1rem;
   margin-bottom: 4px;
-  text-shadow: 0 2px 0 #fff, 0 4px 14px var(--shadow-pink);
-}
-
-h1::before, h1::after {
-  content: '✨';
-  font-size: 1.2rem;
-  margin: 0 10px;
-  vertical-align: middle;
 }
 
 .subtitle {
@@ -266,7 +258,7 @@ button {
   padding: 11px 22px;
   font-size: 1rem;
   font-weight: 600;
-  font-family: 'Fredoka', sans-serif;
+  font-family: 'Poppins', sans-serif;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #fff;
   box-shadow: 0 4px 12px var(--shadow-pink);
@@ -293,7 +285,7 @@ button.secondary {
 }
 
 button.danger {
-  background: linear-gradient(135deg, var(--danger), #ff6f9c);
+  background: linear-gradient(135deg, var(--danger), #ef7086);
   color: white;
 }
 
@@ -305,7 +297,7 @@ button.danger {
 .error-banner {
   background: var(--danger-soft);
   border: 2px solid var(--danger);
-  color: #9a2a53;
+  color: #8a1f3c;
   padding: 10px 14px;
   border-radius: 14px;
   margin-bottom: 16px;
@@ -353,7 +345,7 @@ button.danger {
   margin-bottom: 20px;
   font-size: 1.1rem;
   font-weight: 700;
-  font-family: 'Fredoka', sans-serif;
+  font-family: 'Poppins', sans-serif;
 }
 
 .phase-banner.night {
@@ -369,8 +361,8 @@ button.danger {
 }
 
 .phase-banner.vote {
-  background: linear-gradient(135deg, var(--danger-soft), #ffb3cf);
-  color: #9a2a53;
+  background: linear-gradient(135deg, var(--danger-soft), #ffb3c0);
+  color: #8a1f3c;
   border: 2px solid var(--danger);
 }
 
@@ -402,7 +394,7 @@ button.danger {
 
 /* ---------- Üst gezinme çubuğu ---------- */
 .navbar {
-  background: rgba(255, 246, 251, 0.9);
+  background: rgba(245, 255, 253, 0.92);
   backdrop-filter: blur(6px);
   border-bottom: 2px solid var(--accent-soft);
   margin-bottom: 24px;
@@ -421,12 +413,50 @@ button.danger {
   gap: 10px;
 }
 
+/* "Logo" — özenli ama sade bir simge + düz (kursif olmayan) marka yazısı,
+   önceki el yazısı fontuna göre daha kurumsal/profesyonel bir görünüm için. */
 .navbar-brand {
-  font-family: 'Dancing Script', cursive;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Poppins', sans-serif;
   font-weight: 700;
   color: var(--accent);
   text-decoration: none;
-  font-size: 1.4rem;
+  font-size: 1.25rem;
+  letter-spacing: 0.2px;
+}
+
+.navbar-logo-icon {
+  display: inline-flex;
+  color: var(--accent);
+}
+
+.online-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--panel-light);
+  border: 1px solid var(--accent-soft);
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+
+.online-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--good);
+  box-shadow: 0 0 0 0 rgba(47, 158, 110, 0.6);
+  animation: onlineDotPulse 2s ease-in-out infinite;
+}
+
+@keyframes onlineDotPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(47, 158, 110, 0.5); }
+  50% { box-shadow: 0 0 0 4px rgba(47, 158, 110, 0); }
 }
 
 .navbar-links {
@@ -474,23 +504,31 @@ button.danger {
   width: 46%;
   height: 46%;
   border-radius: 50%;
-  background: radial-gradient(circle, #ffd9ec 0%, #ffb8dd 100%);
+  background: radial-gradient(circle, #d5f7f1 0%, #a3ebe0 100%);
   border: 3px solid var(--gold);
   box-shadow: 0 0 30px var(--shadow-pink), inset 0 0 20px rgba(255, 255, 255, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
-  color: #9a2a53;
+  color: #0d5c53;
   font-weight: 600;
   font-size: 0.85rem;
   padding: 10px;
   white-space: pre-line;
 }
 
+/* ÖNEMLİ: sabit bir yükseklik veriyoruz. .seat mutlak konumlandırılıp
+   transform:translate(-50%,-50%) ile merkeze alınıyor — yükseklik içeriğe
+   göre (auto) değişseydi (örn. kurucunun "Kurucu" etiketi, ya da "At" düğmesi
+   olan/olmayan koltuklar), her koltuğun avatarı çemberin gerçek noktasına göre
+   FARKLI miktarda kayardı; bu da "oyuncular masanın etrafında düzensiz
+   duruyor" görünümünün olası bir kaynağıydı. Sabit yükseklik, içerik ne olursa
+   olsun her koltuğun avatarını anchor noktasına göre BİREBİR aynı yere koyar. */
 .seat {
   position: absolute;
   width: 88px;
+  height: 140px;
   transform: translate(-50%, -50%);
   text-align: center;
   z-index: 1;
@@ -507,7 +545,7 @@ button.danger {
   justify-content: center;
   font-size: 1.6rem;
   margin: 0 auto 6px;
-  box-shadow: 0 3px 8px rgba(255, 95, 162, 0.2);
+  box-shadow: 0 3px 8px rgba(15, 168, 156, 0.22);
   overflow: hidden;
 }
 
@@ -559,29 +597,27 @@ button.danger {
   position: relative;
 }
 
-/* Konuşma halkaları: Agora'nın ses seviyesi olayına göre, konuşan oyuncunun
-   avatarından dışa doğru genişleyip kaybolan iki eşzamanlı halka — kimin o an
-   konuştuğu anlık ve net görülsün diye. Halkanın rengi oyuncunun kendi
-   rengiyle eşleşir (bkz. SeatTable.js'teki --speak-color inline değişkeni). */
-.seat.speaking .seat-avatar::before,
-.seat.speaking .seat-avatar::after {
-  content: '';
+/* Konuşma göstergesi: önceki avatarı çevreleyen genişleyen "halka" efekti
+   kaldırıldı — bunun yerine avatarın köşesinde yanıp sönen tek, sade yeşil
+   bir nokta var. Kimin an itibarıyla konuştuğu hâlâ net görülür ama daha
+   sakin/az göz yorucu bir gösterge. */
+.speak-dot {
   position: absolute;
-  inset: -6px;
+  bottom: -1px;
+  right: -1px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  border: 2px solid var(--speak-color, var(--good));
-  opacity: 0;
-  animation: speakingRing 1.1s ease-out infinite;
+  background: var(--good);
+  border: 2px solid var(--panel);
+  animation: speakDotBlink 0.9s ease-in-out infinite;
   pointer-events: none;
+  z-index: 2;
 }
 
-.seat.speaking .seat-avatar::after {
-  animation-delay: 0.45s;
-}
-
-@keyframes speakingRing {
-  0% { transform: scale(0.75); opacity: 0.9; }
-  100% { transform: scale(1.9); opacity: 0; }
+@keyframes speakDotBlink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.85); }
 }
 
 .seat-name {
@@ -610,7 +646,7 @@ button.danger {
   font-size: 0.65rem;
   font-weight: 700;
   background: var(--danger-soft);
-  color: #9a2a53;
+  color: #8a1f3c;
 }
 
 .seat-ready-pill.ready {
@@ -626,6 +662,7 @@ button.danger {
   }
   .seat {
     width: 64px;
+    height: 108px;
   }
   .seat-avatar {
     width: 40px;
@@ -728,7 +765,7 @@ button.danger {
 
 .avatar-status-pill.PENDING { background: #ffe1a8; color: #7a4a12; }
 .avatar-status-pill.APPROVED { background: #d4f5e2; color: #1f7a4c; }
-.avatar-status-pill.REJECTED { background: var(--danger-soft); color: #9a2a53; }
+.avatar-status-pill.REJECTED { background: var(--danger-soft); color: #8a1f3c; }
 
 /* ---------- İleri seviye yönetici paneli ---------- */
 .admin-table {

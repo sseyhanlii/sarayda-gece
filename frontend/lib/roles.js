@@ -37,6 +37,23 @@ export const TEAM_LABELS = {
 
 export const ALL_ROLE_KEYS = Object.keys(ROLE_LABELS);
 
+// Owner admin panelinden rollerin görünen ismini değiştirebiliyor
+// (bkz. GET/PUT /api/settings/public ve /api/admin/settings -> roleLabels).
+// Bu, varsayılan ROLE_LABELS'ın üzerine SADECE gönderilen anahtarları yazan
+// bir "efektif etiket haritası" üretir — böylece owner bazı rolleri
+// değiştirip bazılarını varsayılanda bırakabilir. Sunucuya erişilemezse
+// (overrides boş/undefined) saf ROLE_LABELS ile aynı sonucu döner.
+export function resolveRoleLabels(overrides) {
+  if (!overrides || typeof overrides !== 'object') return ROLE_LABELS;
+  const merged = { ...ROLE_LABELS };
+  for (const [key, label] of Object.entries(overrides)) {
+    if (typeof label === 'string' && label.trim() && merged[key] !== undefined) {
+      merged[key] = label;
+    }
+  }
+  return merged;
+}
+
 // Gece bir eylemi olan roller — Zehirbaz'ın "kilitle" listesi ve benzeri
 // yerlerde SADECE bunlar gösterilir (bir rolün gece yeteneği yoksa kilitlemek
 // anlamsızdır).

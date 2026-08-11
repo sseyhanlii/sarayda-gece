@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getSocket } from '../../lib/socket';
 import { getUser, isLoggedIn } from '../../lib/auth';
-import { ROOM_SIZES, ROOM_SIZE_ROLE_SETS, ROLE_LABELS, ROOM_SIZE_NAMES } from '../../lib/roles';
+import { ROOM_SIZES, ROOM_SIZE_ROLE_SETS, ROLE_LABELS, ROOM_SIZE_NAMES, resolveRoleLabels } from '../../lib/roles';
 import { fetchPublicSettings } from '../../lib/api';
 import NavBar from '../../components/NavBar';
 
@@ -28,6 +28,10 @@ export default function LobbyPage() {
   // sunucudan çekiyoruz.
   const [roomNames, setRoomNames] = useState(ROOM_SIZE_NAMES);
   const [roleSets, setRoleSets] = useState(ROOM_SIZE_ROLE_SETS);
+  // Owner admin panelinden rol isimlerini değiştirebildiği için burada da
+  // sabit ROLE_LABELS yerine sunucudan gelen (varsa özelleştirilmiş) etiketleri
+  // kullanıyoruz — bkz. resolveRoleLabels.
+  const [roleLabels, setRoleLabels] = useState(ROLE_LABELS);
   // Şu an aktif (RAM'deki) odaların anlık listesi — oda boyutuna göre gruplu.
   // Sunucu her oda değişikliğinde (katılma/ayrılma/başlama/bitme) bunu
   // kendiliğinden yayınlar, biz burada sadece dinleyip diziyoruz.
@@ -44,6 +48,7 @@ export default function LobbyPage() {
       .then((s) => {
         if (s.roomNames) setRoomNames(s.roomNames);
         if (s.roleSets) setRoleSets(s.roleSets);
+        setRoleLabels(resolveRoleLabels(s.roleLabels));
       })
       .catch(() => {}); // backend'e erişilemezse yedek değerlerle devam et
 
@@ -129,16 +134,22 @@ export default function LobbyPage() {
           const roomsOfSize = lobbyRooms.filter((r) => r.roomSize === size);
           return (
             <div className="card" key={size}>
-              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <div>
+              {/* ÖNEMLİ: bu satır önceden flexWrap:'wrap' kullanıyordu — rol listesi
+                  uzun olan (6/8 kişilik) kartlarda metin satırı sarınca TÜM satır
+                  bir alt satıra kayıyor, bu da "Oda Oluştur" butonunun bazı
+                  kartlarda sağda bazılarında solda/altta görünmesine yol açıyordu.
+                  Artık satır hiç sarmıyor; metin KENDİ içinde sarabiliyor
+                  (minWidth:0 + flex:1), buton HER ZAMAN sabit sağda kalıyor. */}
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1, minWidth: 0, paddingRight: 12 }}>
                   <h3 style={{ margin: '0 0 4px' }}>
                     {size} Kişilik — {roomNames[size]}
                   </h3>
                   <p className="small" style={{ margin: 0 }}>
-                    Roller: {(roleSets[size] || []).map((key) => ROLE_LABELS[key]).join(', ')}
+                    Roller: {(roleSets[size] || []).map((key) => roleLabels[key] || key).join(', ')}
                   </p>
                 </div>
-                <button onClick={() => handleCreateRoom(size)} disabled={busy}>
+                <button onClick={() => handleCreateRoom(size)} disabled={busy} style={{ flexShrink: 0 }}>
                   + Oda Oluştur
                 </button>
               </div>

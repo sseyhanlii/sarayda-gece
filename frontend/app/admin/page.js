@@ -331,6 +331,7 @@ function GameSettingsPanel({ onError }) {
           voteSeconds: Math.round(s.voteDurationMs / 1000),
           roomNames: { ...s.roomNames },
           roleSets: Object.fromEntries(Object.entries(s.roleSets).map(([size, keys]) => [size, [...keys]])),
+          roleLabels: { ...(s.roleLabels || {}) },
           supportedRoomSizes: s.supportedRoomSizes,
         })
       )
@@ -349,6 +350,14 @@ function GameSettingsPanel({ onError }) {
     });
   }
 
+  function setRoleLabel(roleKey, value) {
+    setSettings((prev) => ({ ...prev, roleLabels: { ...prev.roleLabels, [roleKey]: value } }));
+  }
+
+  function effectiveLabel(roleKey) {
+    return settings.roleLabels[roleKey] || ROLE_LABELS[roleKey];
+  }
+
   async function handleSave() {
     setSuccess('');
     for (const size of settings.supportedRoomSizes) {
@@ -359,12 +368,20 @@ function GameSettingsPanel({ onError }) {
     }
     setSaving(true);
     try {
+      // Boş bırakılan (ya da varsayılanla aynı) rol ismi girişlerini gönderme —
+      // sunucu tarafında "override yok" = varsayılan etiket kullanılır demektir.
+      const trimmedRoleLabels = Object.fromEntries(
+        Object.entries(settings.roleLabels)
+          .map(([key, value]) => [key, (value || '').trim()])
+          .filter(([, value]) => value.length > 0)
+      );
       await updateAdminSettings(getToken(), {
         nightDurationMs: settings.nightSeconds * 1000,
         dayDurationMs: settings.daySeconds * 1000,
         voteDurationMs: settings.voteSeconds * 1000,
         roomNames: settings.roomNames,
         roleSets: settings.roleSets,
+        roleLabels: trimmedRoleLabels,
       });
       setSuccess('Ayarlar kaydedildi — bundan sonra oluşturulacak odalarda geçerli olacak.');
     } catch (err) {
@@ -433,6 +450,28 @@ function GameSettingsPanel({ onError }) {
       </div>
 
       <div className="card">
+        <h3 style={{ marginTop: 0 }}>Rol İsimleri</h3>
+        <p className="small">
+          Bir rolün görünen ismini değiştirebilirsin — kaydettiğinde odanın içinde, lobide ve
+          liderlik tablosunda görünen isim ANINDA güncellenir (aktif oyunlar dahil). Boş bırakırsan
+          varsayılan isim kullanılır.
+        </p>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 12 }}>
+          {ALL_ROLE_KEYS.map((key) => (
+            <div className="field" key={key} style={{ flex: 1, minWidth: 200 }}>
+              <label>{ROLE_LABELS[key]} (varsayılan)</label>
+              <input
+                value={settings.roleLabels[key] || ''}
+                onChange={(e) => setRoleLabel(key, e.target.value)}
+                placeholder={ROLE_LABELS[key]}
+                maxLength={40}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
         <h3 style={{ marginTop: 0 }}>Rol Dağılımları</h3>
         <p className="small">Her oda boyutu için TAM OLARAK o kadar rol seçmelisin (örn. 4 kişilik oda = tam 4 rol).</p>
         {settings.supportedRoomSizes.map((size) => {
@@ -464,7 +503,7 @@ function GameSettingsPanel({ onError }) {
                       onChange={() => toggleRole(size, key)}
                       style={{ margin: 0 }}
                     />
-                    {ROLE_LABELS[key]}
+                    {effectiveLabel(key)}
                   </label>
                 ))}
               </div>

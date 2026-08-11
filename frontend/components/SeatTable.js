@@ -33,7 +33,7 @@ export default function SeatTable({ players, hostUserId, myUserId, centerLabel, 
             className={`seat ${isHost ? 'host' : ''} ${isDead ? 'dead' : ''} ${isSpeaking ? 'speaking' : ''}`}
             style={{ left: `${left}%`, top: `${top}%` }}
           >
-            <div className="seat-avatar" style={{ borderColor: color, '--speak-color': color }}>
+            <div className="seat-avatar" style={{ borderColor: color }}>
               {p.avatarUrl ? (
                 <img src={p.avatarUrl} alt={p.username} className="seat-avatar-img" />
               ) : (
@@ -41,6 +41,9 @@ export default function SeatTable({ players, hostUserId, myUserId, centerLabel, 
               )}
               {isDead && <span className="seat-dead-mark">💀</span>}
               {p.isBot && !isDead && <span className="seat-bot-mark">🤖</span>}
+              {/* Önceki "genişleyen halka" efekti kaldırıldı — artık konuşurken
+                  avatarın köşesinde sade, yanıp sönen tek bir yeşil nokta var. */}
+              {isSpeaking && <span className="speak-dot" aria-hidden="true" />}
             </div>
             <div className="seat-name" style={{ color }}>
               {p.username}

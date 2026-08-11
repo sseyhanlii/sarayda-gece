@@ -193,6 +193,22 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase, isAlive =
     setDayMicOn(!shouldBeMuted);
   }, [phase, joined, dayMicManuallyOff, isAlive]);
 
+  // ---------- Ölünce GİZLİ (suikastçı) kanalda da ZORUNLU sustur ----------
+  // Yukarıdaki effect sadece genel/gündüz kanalını susturuyordu — bir suikastçı
+  // ölmeden ÖNCE gizli kanalda mikrofonunu açık bırakmışsa, öldükten sonra da
+  // yayın yapmaya devam ederdi (kimse "konuşamasın" beklentisini karşılamazdı).
+  // toggleNightMic zaten `isAlive===false` iken YENİDEN açılmayı reddediyor;
+  // burada eksik olan, ZATEN AÇIK olan yayını öldüğü anda kapatmaktı.
+  useEffect(() => {
+    if (isAlive !== false) return;
+    const nightClient = nightClientRef.current;
+    if (nightClient && nightMicOn) {
+      nightClient.unpublish().catch(() => {});
+      setNightMicOn(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAlive]);
+
   // Oyuncu kendi mikrofonunu istediği zaman açıp kapatabilir — ama elendiyse
   // (isAlive=false) bu zorunlu susturmayı ezemez.
   function toggleDayMic() {
