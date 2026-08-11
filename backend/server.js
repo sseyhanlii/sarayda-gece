@@ -73,14 +73,28 @@ function authMiddleware(req, res, next) {
 }
 
 // ---------- REST: PROFİL / LİDERLİK TABLOSU ----------
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', message: 'Sarayda Gece backend çalışıyor.' });
+});
+
 app.get('/api/stats/me', authMiddleware, async (req, res) => {
-  const result = await pool.query(`SELECT * FROM player_stats WHERE user_id = $1`, [req.auth.userId]);
-  res.json(result.rows[0] || {});
+  try {
+    const result = await pool.query(`SELECT * FROM player_stats WHERE user_id = $1`, [req.auth.userId]);
+    res.json(result.rows[0] || {});
+  } catch (err) {
+    console.error('DB hatası (/api/stats/me):', err.message);
+    res.status(500).json({ error: 'Veritabanına bağlanılamadı.' });
+  }
 });
 
 app.get('/api/leaderboard', async (req, res) => {
-  const result = await pool.query(`SELECT * FROM leaderboard LIMIT 50`);
-  res.json(result.rows);
+  try {
+    const result = await pool.query(`SELECT * FROM leaderboard LIMIT 50`);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('DB hatası (/api/leaderboard):', err.message);
+    res.status(500).json({ error: 'Veritabanına bağlanılamadı.' });
+  }
 });
 
 // ---------- HTTP + SOCKET.IO KURULUMU ----------
