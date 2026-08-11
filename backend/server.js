@@ -19,7 +19,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// Not: Supabase (ve çoğu barındırılan Postgres) SSL zorunlu tutar; aşağıdaki
+// ssl ayarı olmadan Render üzerinde "self signed certificate" hatası alınır.
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 
 // ---------- REST: AUTH ----------
