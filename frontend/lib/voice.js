@@ -97,13 +97,20 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
   }, [appId, roomCode, userId]);
 
   // ---------- Faza göre gündüz kanalını otomatik sustur/aç ----------
+  // ÖNEMLİ: `joined` de bağımlılıklarda olmalı. Aksi halde şu senaryoda mikrofon
+  // SÜREKLİ kapalı kalır ve kimse duyamaz: effect1 track'i asenkron oluşturduğu
+  // için bu effect ilk render'da track henüz yokken bir kere çalışıp hiçbir şey
+  // yapmadan çıkar; eğer o andan sonra faz hiç değişmezse (örn. Lobi'de kalınırsa)
+  // bir daha da tetiklenmez ve track, effect1'in koyduğu varsayılan "muted: true"
+  // durumunda kilitli kalır. `joined` true olduğunda bu effect'i bir kez daha
+  // çalıştırarak track'i o anki gerçek faza göre doğru şekilde aç/kapat.
   useEffect(() => {
     const track = localTrackRef.current;
     if (!track) return;
     const shouldBeMuted = phase === 'NIGHT';
     track.setMuted(shouldBeMuted);
     setDayMicOn(!shouldBeMuted);
-  }, [phase]);
+  }, [phase, joined]);
 
   // ---------- Suikastçılar için gizli gece kanalına (bir kez) katıl ----------
   useEffect(() => {
