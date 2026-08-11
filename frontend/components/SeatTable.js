@@ -45,19 +45,31 @@ export default function SeatTable({ players, hostUserId, myUserId, centerLabel, 
                   avatarın köşesinde sade, yanıp sönen tek bir yeşil nokta var. */}
               {isSpeaking && <span className="speak-dot" aria-hidden="true" />}
             </div>
-            <div className="seat-name" style={{ color }}>
-              {p.username}
-              {isMe ? ' (sen)' : ''}
+            {/* ÖNEMLİ: isim/rozet/buton satırları artık .seat-info içinde ve
+                position:absolute ile avatarın ALTINA asılıyor — normal akışta
+                DEĞİLLER. Böylece bu satırların sayısı (kurucu etiketi, hazır
+                rozeti, at butonu var/yok) .seat kutusunun toplam yüksekliğini
+                ETKİLEMEZ; avatar HER koltukta anchor noktasının BİREBİR
+                üzerinde kalır. Önceki yaklaşımda (hepsi aynı normal-akış
+                kutusunda, kutu translate(-50%,-50%) ile ortalanıyordu) farklı
+                içerik miktarı avatarı anchor'a göre kaydırıyordu — "oyuncular
+                masa etrafında düzensiz duruyor" şikayetinin gerçek kök nedeni
+                buydu. */}
+            <div className="seat-info">
+              <div className="seat-name" style={{ color }}>
+                {p.username}
+                {isMe ? ' (sen)' : ''}
+              </div>
+              {isHost && <div className="small">Kurucu</div>}
+              {showReady && !isDead && (
+                <div className={`seat-ready-pill ${p.isReady ? 'ready' : ''}`}>{p.isReady ? '✔ Hazır' : 'Bekliyor'}</div>
+              )}
+              {onKick && !isHost && !isMe && (
+                <button className="seat-kick" onClick={() => onKick(p.userId)}>
+                  At
+                </button>
+              )}
             </div>
-            {isHost && <div className="small">Kurucu</div>}
-            {showReady && !isDead && (
-              <div className={`seat-ready-pill ${p.isReady ? 'ready' : ''}`}>{p.isReady ? '✔ Hazır' : 'Bekliyor'}</div>
-            )}
-            {onKick && !isHost && !isMe && (
-              <button className="seat-kick" onClick={() => onKick(p.userId)}>
-                At
-              </button>
-            )}
           </div>
         );
       })}

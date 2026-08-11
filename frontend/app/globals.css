@@ -59,12 +59,25 @@
   to { opacity: 1; transform: scale(1); }
 }
 
+/* ÖNEMLİ: .seat zaten konumlandırma için transform:translate(-50%,-50%)
+   kullanıyor (bkz. aşağıdaki .seat kuralı). Paylaşılan popIn keyframe'i
+   (`transform: scale(...)`) kullanırsak, animasyon bittiğinde CSS bu transform'u
+   TAMAMEN EZER — sonuç: koltuk artık kendi merkez noktasına göre değil, sol-üst
+   köşesine göre konumlanır, bu da "oyuncular masa etrafında düzensiz duruyor"
+   şikayetinin gerçek kök nedeniydi. Koltuklar için ayrı bir keyframe kullanıp
+   translate'i HER karede koruyoruz.
+   */
+@keyframes seatPopIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
 .card {
   animation: fadeInUp 0.35s ease both;
 }
 
 .seat {
-  animation: popIn 0.3s ease both;
+  animation: seatPopIn 0.3s ease both;
 }
 
 .badge {
@@ -518,25 +531,29 @@ button.danger {
   white-space: pre-line;
 }
 
-/* ÖNEMLİ: sabit bir yükseklik veriyoruz. .seat mutlak konumlandırılıp
-   transform:translate(-50%,-50%) ile merkeze alınıyor — yükseklik içeriğe
-   göre (auto) değişseydi (örn. kurucunun "Kurucu" etiketi, ya da "At" düğmesi
-   olan/olmayan koltuklar), her koltuğun avatarı çemberin gerçek noktasına göre
-   FARKLI miktarda kayardı; bu da "oyuncular masanın etrafında düzensiz
-   duruyor" görünümünün olası bir kaynağıydı. Sabit yükseklik, içerik ne olursa
-   olsun her koltuğun avatarını anchor noktasına göre BİREBİR aynı yere koyar. */
+/* ÖNEMLİ: .seat artık avatarla BİREBİR aynı boyutta (52x52) — yani
+   transform:translate(-50%,-50%) sonrası anchor noktası tam olarak avatarın
+   MERKEZİNE denk geliyor, başka hiçbir şeye değil. İsim/"Kurucu" etiketi/hazır
+   rozeti/at butonu artık .seat-info içinde ve position:absolute ile avatarın
+   ALTINA asılıyor (normal akışta değiller, .seat'in kutu boyutunu etkilemiyorlar).
+   Önceki yaklaşımda bu satırlar .seat'in İÇİNDE normal akıştaydı ve .seat'in
+   TÜMÜ merkeze alınıyordu — bu satırların sayısı koltuktan koltuğa değiştiği
+   için (kurucu etiketi, at butonu var/yok) her avatar anchor noktasına göre
+   FARKLI miktarda kayıyordu. Artık avatar HER koltukta anchor'ın üzerinde,
+   birebir aynı yerde. (Ayrıca bkz. yukarıdaki seatPopIn keyframe notu — ikinci,
+   daha büyük bir kök neden de oradaydı: popIn animasyonu translate'i eziyordu.) */
 .seat {
   position: absolute;
-  width: 88px;
-  height: 140px;
+  width: 52px;
+  height: 52px;
   transform: translate(-50%, -50%);
   text-align: center;
   z-index: 1;
 }
 
 .seat-avatar {
-  width: 52px;
-  height: 52px;
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
   background: var(--panel-light);
   border: 2px solid var(--accent-soft);
@@ -544,9 +561,17 @@ button.danger {
   align-items: center;
   justify-content: center;
   font-size: 1.6rem;
-  margin: 0 auto 6px;
   box-shadow: 0 3px 8px rgba(15, 168, 156, 0.22);
   overflow: hidden;
+}
+
+.seat-info {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 88px;
+  padding-top: 6px;
 }
 
 .seat-avatar-img {
@@ -661,14 +686,14 @@ button.danger {
     margin: 6px auto 22px;
   }
   .seat {
-    width: 64px;
-    height: 108px;
-  }
-  .seat-avatar {
     width: 40px;
     height: 40px;
+  }
+  .seat-avatar {
     font-size: 1.2rem;
-    margin-bottom: 4px;
+  }
+  .seat-info {
+    width: 64px;
   }
   .seat-dead-mark {
     font-size: 1.05rem;
