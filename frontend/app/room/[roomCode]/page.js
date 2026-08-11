@@ -264,6 +264,12 @@ export default function RoomPage() {
     socketRef.current.emit('kickPlayer', { targetUserId });
   }
 
+  // Oda kurucusu, arkadaş beklerken lobide tek tuşla bir bot ekleyebilir —
+  // admin paneline gitmeye gerek yok (bkz. GameRoom.addBot host kontrolü).
+  function handleAddBot() {
+    socketRef.current.emit('addBotToRoom');
+  }
+
   function handleAbort() {
     if (!confirm('Maçı erken bitirip odayı lobiye döndürmek istediğine emin misin?')) return;
     socketRef.current.emit('abortGame');
@@ -431,6 +437,11 @@ export default function RoomPage() {
           <button className={me?.isReady ? 'secondary' : ''} onClick={handleToggleReady} style={{ width: '100%', marginTop: 8 }}>
             {me?.isReady ? '✔ Hazırım (geri al)' : 'Hazırım!'}
           </button>
+          {isHost && players.length < roomSize && (
+            <button className="secondary" onClick={handleAddBot} style={{ width: '100%', marginTop: 8 }}>
+              🤖 Bot Ekle
+            </button>
+          )}
           {isHost && (
             <button
               onClick={handleStartGame}

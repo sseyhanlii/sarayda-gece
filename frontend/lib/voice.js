@@ -20,7 +20,42 @@ import { fetchVoiceToken } from './api';
 
 const ASSASSIN_ROLES = ['GOLGE_LIDER', 'ZEHIRBAZ'];
 const NIGHT_UID_SUFFIX = '-night';
-const SPEAKING_VOLUME_THRESHOLD = 5;
+// Önceki eşik (5) çok hassastı — nefes/klavye/arka plan gürültüsünde bile
+// konuşma halkası anlık yanıp sönüyordu. Eşik yükseltildi VE aşağıdaki
+// "tracker" ile bir tür histerezis eklendi: (a) halka yalnızca art arda birkaç
+// örnekte eşik üstü kalınırsa yanar (ani tek bir gürültüyle tetiklenmez),
+// (b) ses eşiğin altına düşse de kısa bir süre (HOLD) yanık kalır (kelimeler
+// arasındaki doğal duraklamalarda halka sönüp yanmasın).
+const SPEAKING_VOLUME_THRESHOLD = 14;
+const SPEAKING_ONSET_TICKS = 2; // ~200ms'lik örneklerden art arda kaç tanesi eşik üstü olmalı
+const SPEAKING_HOLD_MS = 550; // eşik altına düşse de halka bu süre boyunca sönmez
+
+// Agora'nın 'volume-indicator' olayını "hassas" tek örnekli ham veriden,
+// kısa gürültü darbelerini filtreleyen ve doğal duraklamalarda flickerlamayan
+// yumuşatılmış bir "konuşuyor" kümesine çeviren küçük durum makinesi.
+// Her ses kanalı (gündüz/gece) için ayrı bir tracker örneği kullanılır.
+function createSpeakingTracker() {
+  const streaks = new Map(); // uid -> art arda eşik üstü örnek sayısı
+  const lastConfirmedAt = new Map(); // uid -> son "konuşuyor" onaylanan zaman damgası
+  return function update(volumes, resolveUid) {
+    const now = Date.now();
+    volumes.forEach(({ level, uid }) => {
+      const id = resolveUid ? resolveUid(uid) : String(uid);
+      if (level > SPEAKING_VOLUME_THRESHOLD) {
+        const streak = (streaks.get(id) || 0) + 1;
+        streaks.set(id, streak);
+        if (streak >= SPEAKING_ONSET_TICKS) lastConfirmedAt.set(id, now);
+      } else {
+        streaks.set(id, 0);
+      }
+    });
+    const speaking = new Set();
+    lastConfirmedAt.forEach((ts, id) => {
+      if (now - ts < SPEAKING_HOLD_MS) speaking.add(id);
+    });
+    return speaking;
+  };
+}
 
 // Hatanın gerçekten mikrofon izniyle mi yoksa başka bir sebeple (token, ağ,
 // sunucu yapılandırması) mi ilgili olduğunu ayırt eder — yanlış teşhise
@@ -61,6 +96,8 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase, isAlive =
   const nightJoinedRef = useRef(false);
   const deafenedRef = useRef(false);
   const remoteTracksRef = useRef(new Map()); // uid -> uzak ses track'i (deafen aç/kapa için)
+  const daySpeakingTrackerRef = useRef(createSpeakingTracker());
+  const nightSpeakingTrackerRef = useRef(createSpeakingTracker());
 
   const isAssassin = ASSASSIN_ROLES.includes(myRole);
   const speakingUserIds = useMemo(() => new Set([...daySpeaking, ...nightSpeaking]), [daySpeaking, nightSpeaking]);
@@ -115,11 +152,7 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase, isAlive =
         // kullanıcılar (kendimiz dahil) için ses seviyesi bildirir.
         dayClient.enableAudioVolumeIndicator();
         dayClient.on('volume-indicator', (volumes) => {
-          const speaking = new Set();
-          volumes.forEach(({ level, uid }) => {
-            if (level > SPEAKING_VOLUME_THRESHOLD) speaking.add(String(uid));
-          });
-          setDaySpeaking(speaking);
+          setDaySpeaking(daySpeakingTrackerRef.current(volumes));
         });
 
         if (!cancelled) setJoined(true);
@@ -218,12 +251,9 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase, isAlive =
 
         nightClient.enableAudioVolumeIndicator();
         nightClient.on('volume-indicator', (volumes) => {
-          const speaking = new Set();
-          volumes.forEach(({ level, uid }) => {
-            if (level > SPEAKING_VOLUME_THRESHOLD) {
-              const raw = String(uid);
-              speaking.add(raw.endsWith(NIGHT_UID_SUFFIX) ? raw.slice(0, -NIGHT_UID_SUFFIX.length) : raw);
-            }
+          const speaking = nightSpeakingTrackerRef.current(volumes, (uid) => {
+            const raw = String(uid);
+            return raw.endsWith(NIGHT_UID_SUFFIX) ? raw.slice(0, -NIGHT_UID_SUFFIX.length) : raw;
           });
           setNightSpeaking(speaking);
         });
