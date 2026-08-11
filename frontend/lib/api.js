@@ -95,3 +95,10 @@ export function endRoomAsAdmin(token, roomCode) {
     headers: authHeader(token),
   });
 }
+
+// ---------- Sesli sohbet (Agora token) ----------
+export function fetchVoiceToken(token, channelName) {
+  return request(`/api/voice/token?channelName=${encodeURIComponent(channelName)}`, {
+    headers: authHeader(token),
+  });
+}

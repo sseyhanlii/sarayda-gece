@@ -12,8 +12,28 @@
 // ============================================================
 
 import { useEffect, useRef, useState } from 'react';
+import { getToken } from './auth';
+import { fetchVoiceToken } from './api';
 
 const ASSASSIN_ROLES = ['GOLGE_LIDER', 'ZEHIRBAZ'];
+
+// Hatanın gerçekten mikrofon izniyle mi yoksa başka bir sebeple (token, ağ,
+// sunucu yapılandırması) mi ilgili olduğunu ayırt eder — yanlış teşhise
+// (örn. "mikrofon" derken aslında token hatası olması) düşmemek için.
+function describeVoiceError(err) {
+  const code = err?.code || '';
+  const name = err?.name || '';
+  const isPermissionIssue =
+    code === 'PERMISSION_DENIED' ||
+    code === 'NOT_READABLE' ||
+    code === 'DEVICE_NOT_FOUND' ||
+    name === 'NotAllowedError' ||
+    name === 'NotFoundError';
+  if (isPermissionIssue) {
+    return 'Mikrofona erişilemedi. Tarayıcının mikrofon iznini kontrol et (adres çubuğundaki kilit simgesi).';
+  }
+  return `Sesli sohbet bağlantısı kurulamadı (${code || err?.message || 'bilinmeyen hata'}). Sayfayı yenilemeyi dene.`;
+}
 
 export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
   const [micError, setMicError] = useState('');
@@ -47,15 +67,18 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
         localTrackRef.current = localTrack;
         localTrack.setMuted(true); // faz mantığı henüz devrede değil, varsayılan kapalı
 
-        await dayClient.join(appId, `${roomCode}-day`, null, userId);
+        // Agora projesi "sertifikalı" (güvenli) modda olduğu için App ID'yi
+        // token'sız kullanamıyoruz — backend'den bu kanala özel bir RTC token isteriz.
+        const dayChannel = `${roomCode}-day`;
+        const { token: dayToken } = await fetchVoiceToken(getToken(), dayChannel);
+
+        await dayClient.join(appId, dayChannel, dayToken, userId);
         await dayClient.publish(localTrack);
         if (!cancelled) setJoined(true);
       } catch (err) {
         console.error('Ses bağlantısı kurulamadı:', err);
         if (!cancelled) {
-          setMicError(
-            'Mikrofona erişilemedi. Tarayıcının mikrofon iznini kontrol et (adres çubuğundaki kilit simgesi).'
-          );
+          setMicError(describeVoiceError(err));
         }
       }
     }
@@ -91,7 +114,9 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
       try {
         const AgoraRTC = (await import('agora-rtc-sdk-ng')).default;
         const nightClient = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
-        await nightClient.join(appId, `${roomCode}-night-assassins`, null, `${userId}-night`);
+        const nightChannel = `${roomCode}-night-assassins`;
+        const { token: nightToken } = await fetchVoiceToken(getToken(), nightChannel);
+        await nightClient.join(appId, nightChannel, nightToken, `${userId}-night`);
         if (!cancelled) {
           nightClientRef.current = nightClient;
           nightJoinedRef.current = true;

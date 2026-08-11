@@ -11,6 +11,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 const { Pool } = require('pg');
+const { RtcTokenBuilder, RtcRole } = require('agora-token');
 
 const { GameRoom, PHASE } = require('./game/gameRoom');
 const { calculateMatchScores } = require('./game/scoring');
@@ -191,6 +192,38 @@ app.patch('/api/profile/me', authMiddleware, async (req, res) => {
 
 app.get('/api/profile/avatars', (req, res) => {
   res.json({ avatars: AVAILABLE_AVATAR_EMOJIS });
+});
+
+// ---------- REST: SESLİ SOHBET (AGORA TOKEN ÜRETİMİ) ----------
+// Agora projesi "Primary Certificate" etkin olduğu için (güvenli mod), App ID'yi
+// token'sız kullanmaya çalışmak "CAN_NOT_GET_GATEWAY_SERVER: dynamic use static key"
+// hatası verir. Burada backend, AGORA_APP_CERTIFICATE'i (gizli, sadece sunucuda)
+// kullanarak istemci için kısa ömürlü bir RTC token'ı üretir.
+// uid = 0 ile üretilen token "wildcard" tokendır: o kanala HANGİ uid ile katılırsa
+// katılsın herkes için geçerlidir, bu yüzden gündüz/gece kanalları için tek tek
+// oyuncu uid'i eşleştirmemize gerek kalmaz.
+app.get('/api/voice/token', authMiddleware, (req, res) => {
+  const { channelName } = req.query;
+  if (!channelName) return res.status(400).json({ error: 'channelName zorunlu.' });
+  if (!process.env.AGORA_APP_ID || !process.env.AGORA_APP_CERTIFICATE) {
+    return res.status(503).json({ error: 'Sesli sohbet sunucu tarafında yapılandırılmamış (AGORA_APP_CERTIFICATE eksik).' });
+  }
+  try {
+    const expireSeconds = 6 * 60 * 60; // 6 saat — bir maçtan çok daha uzun
+    const token = RtcTokenBuilder.buildTokenWithUid(
+      process.env.AGORA_APP_ID,
+      process.env.AGORA_APP_CERTIFICATE,
+      String(channelName),
+      0,
+      RtcRole.PUBLISHER,
+      expireSeconds,
+      expireSeconds
+    );
+    res.json({ token });
+  } catch (err) {
+    console.error('Agora token üretim hatası:', err.message);
+    res.status(500).json({ error: 'Token üretilemedi.' });
+  }
 });
 
 // ---------- REST: SİTE GENELİ ADMİN PANELİ ----------
