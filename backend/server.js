@@ -185,6 +185,11 @@ const DEFAULT_GAME_SETTINGS = {
     6: ['GIZLI_PRENSES', 'SAHTE_PRENSES', 'MUHAFIZ', 'BAS_CASUS', 'GOLGE_LIDER', 'ZEHIRBAZ'],
     8: ['GIZLI_PRENSES', 'SAHTE_PRENSES', 'MUHAFIZ', 'HEKIM', 'BAS_CASUS', 'GOLGE_LIDER', 'ZEHIRBAZ', 'TAHT_TALIPLISI'],
   },
+  // Rol isimleri için owner'ın ROLE_DEFINITIONS'daki varsayılan etiketin üzerine
+  // yazdığı özel isimler — boş obje = hiçbiri özelleştirilmemiş, varsayılan
+  // etiket kullanılır. Sadece görsel bir yayındır (oyun mantığını etkilemez),
+  // bu yüzden aktif oyunlar da dahil HERKESE anında yansır.
+  role_labels: {},
 };
 let gameSettings = DEFAULT_GAME_SETTINGS;
 
@@ -199,6 +204,7 @@ async function loadGameSettings() {
         vote_duration_ms: row.vote_duration_ms,
         room_names: row.room_names,
         role_sets: row.role_sets,
+        role_labels: row.role_labels || {}, // schema_v5 öncesi deploy'larda sütun yok — sessizce {} kullan
       };
       console.log('Oyun ayarları veritabanından yüklendi.');
     }
@@ -211,7 +217,7 @@ async function loadGameSettings() {
 loadGameSettings();
 
 function validateGameSettings(body) {
-  const { nightDurationMs, dayDurationMs, voteDurationMs, roomNames, roleSets } = body;
+  const { nightDurationMs, dayDurationMs, voteDurationMs, roomNames, roleSets, roleLabels } = body;
   if (![nightDurationMs, dayDurationMs, voteDurationMs].every((v) => Number.isInteger(v) && v >= 3000 && v <= 300000)) {
     return 'Süreler 3-300 saniye (ms olarak 3000-300000) arasında tam sayı olmalı.';
   }
@@ -229,6 +235,17 @@ function validateGameSettings(body) {
     }
     if (set.some((key) => !ROLE_DEFINITIONS[key])) {
       return `${size} kişilik oda için geçersiz bir rol seçildi.`;
+    }
+  }
+  // roleLabels isteğe bağlı: hiç gönderilmemişse (eski istemci) ya da boşsa sorun değil —
+  // sadece gönderilen her giriş geçerli bir rol anahtarına ve dolu bir metne işaret etmeli.
+  if (roleLabels !== undefined) {
+    if (typeof roleLabels !== 'object' || Array.isArray(roleLabels)) return 'Rol isimleri hatalı biçimde gönderildi.';
+    for (const [key, label] of Object.entries(roleLabels)) {
+      if (!ROLE_DEFINITIONS[key]) return `Geçersiz rol anahtarı: ${key}`;
+      if (typeof label !== 'string' || !label.trim() || label.length > 40) {
+        return `"${ROLE_DEFINITIONS[key].label}" için 1-40 karakter arasında bir isim gir.`;
+      }
     }
   }
   return null;
@@ -582,6 +599,7 @@ app.get('/api/settings/public', (req, res) => {
     voteDurationMs: gameSettings.vote_duration_ms,
     roomNames: gameSettings.room_names,
     roleSets: gameSettings.role_sets,
+    roleLabels: gameSettings.role_labels || {},
   });
 });
 
@@ -592,6 +610,7 @@ app.get('/api/admin/settings', adminMiddleware, (req, res) => {
     voteDurationMs: gameSettings.vote_duration_ms,
     roomNames: gameSettings.room_names,
     roleSets: gameSettings.role_sets,
+    roleLabels: gameSettings.role_labels || {},
     allRoleKeys: ALL_ROLE_KEYS,
     supportedRoomSizes: SUPPORTED_ROOM_SIZES,
   });
@@ -599,11 +618,14 @@ app.get('/api/admin/settings', adminMiddleware, (req, res) => {
 
 // Owner her zaman değiştirebilir; normal admin sadece "edit_settings" izni
 // verilmişse. Değişiklik anında RAM'deki gameSettings'e yansır ve BUNDAN
-// SONRA oluşturulacak odalarda kullanılır (aktif odalar etkilenmez).
+// SONRA oluşturulacak odalarda kullanılır (aktif odalar etkilenmez) — TEK
+// İSTİSNA: roleLabels salt görsel olduğu için aktif oyunlarda dahil ANINDA
+// yansır (frontend zaten canlı olarak /api/settings/public'ten okuyor).
 app.put('/api/admin/settings', adminMiddleware, requirePermission('edit_settings'), async (req, res) => {
   const error = validateGameSettings(req.body);
   if (error) return res.status(400).json({ error });
-  const { nightDurationMs, dayDurationMs, voteDurationMs, roomNames, roleSets } = req.body;
+  const { nightDurationMs, dayDurationMs, voteDurationMs, roomNames, roleSets, roleLabels } = req.body;
+  const cleanRoleLabels = roleLabels || {};
   try {
     await pool.query(
       `UPDATE app_settings SET
@@ -612,9 +634,10 @@ app.put('/api/admin/settings', adminMiddleware, requirePermission('edit_settings
          vote_duration_ms = $3,
          room_names = $4,
          role_sets = $5,
+         role_labels = $6,
          updated_at = now()
        WHERE id = 1`,
-      [nightDurationMs, dayDurationMs, voteDurationMs, JSON.stringify(roomNames), JSON.stringify(roleSets)]
+      [nightDurationMs, dayDurationMs, voteDurationMs, JSON.stringify(roomNames), JSON.stringify(roleSets), JSON.stringify(cleanRoleLabels)]
     );
     gameSettings = {
       night_duration_ms: nightDurationMs,
@@ -622,11 +645,12 @@ app.put('/api/admin/settings', adminMiddleware, requirePermission('edit_settings
       vote_duration_ms: voteDurationMs,
       room_names: roomNames,
       role_sets: roleSets,
+      role_labels: cleanRoleLabels,
     };
     res.json({ ok: true });
   } catch (err) {
     console.error('DB hatası (PUT /api/admin/settings):', err.message);
-    res.status(500).json({ error: 'Ayarlar kaydedilemedi — schema_v4_migration.sql çalıştırıldı mı?' });
+    res.status(500).json({ error: 'Ayarlar kaydedilemedi — schema_v4_migration.sql (ve rol isimleri için schema_v5_migration.sql) çalıştırıldı mı?' });
   }
 });
 
@@ -645,6 +669,15 @@ function getLobbyRoomsList() {
 }
 function broadcastLobbyRooms() {
   io.emit('lobbyRoomsUpdate', getLobbyRoomsList());
+}
+
+// Toplam çevrimiçi (giriş yapmış, en az bir soketi açık) TEKİL kullanıcı sayısı —
+// userId -> o kullanıcının şu an açık kaç soketi (sekme/cihazı) var. Sayı sadece
+// haritanın büyüklüğü (map.size) alınarak hesaplanır, bu yüzden aynı kullanıcının
+// 2 sekme açması sayaç için hâlâ "1 kişi" demektir.
+const onlineUserSocketCounts = new Map();
+function broadcastOnlineCount() {
+  io.emit('onlineCountUpdate', { count: onlineUserSocketCounts.size });
 }
 
 function generateRoomCode() {
@@ -692,6 +725,14 @@ io.on('connection', (socket) => {
   function canManageRooms() {
     return isOwner || Boolean(adminPermissions?.manage_rooms);
   }
+
+  // ---- ÇEVRİMİÇİ KULLANICI SAYACI ----
+  // Aynı kullanıcı birden fazla sekme/cihazdan bağlanabildiği için TEKİL
+  // kullanıcı sayısını (socket sayısını değil) sayıyoruz — bkz. onlineUserSocketCounts.
+  const wasAlreadyOnline = onlineUserSocketCounts.has(userId);
+  onlineUserSocketCounts.set(userId, (onlineUserSocketCounts.get(userId) || 0) + 1);
+  if (!wasAlreadyOnline) broadcastOnlineCount();
+  else socket.emit('onlineCountUpdate', { count: onlineUserSocketCounts.size });
 
   // ---- LOBİ ----
   socket.on('createRoom', ({ roomSize } = {}) => {
@@ -914,6 +955,16 @@ io.on('connection', (socket) => {
 
   // ---- BAĞLANTI KOPMASI ----
   socket.on('disconnect', () => {
+    // Çevrimiçi sayacı: bu kullanıcının başka açık soketi (sekmesi) yoksa artık
+    // tamamen çevrimdışı sayılır.
+    const remaining = (onlineUserSocketCounts.get(userId) || 1) - 1;
+    if (remaining <= 0) {
+      onlineUserSocketCounts.delete(userId);
+      broadcastOnlineCount();
+    } else {
+      onlineUserSocketCounts.set(userId, remaining);
+    }
+
     const room = activeRooms.get(socket.data.roomCode);
     if (!room) return;
     // Not: Oyun ortasında disconnect'i "ölüm" saymak yerine burada sadece

@@ -35,6 +35,9 @@ CREATE TABLE app_settings (
         "6": ["GIZLI_PRENSES","SAHTE_PRENSES","MUHAFIZ","BAS_CASUS","GOLGE_LIDER","ZEHIRBAZ"],
         "8": ["GIZLI_PRENSES","SAHTE_PRENSES","MUHAFIZ","HEKIM","BAS_CASUS","GOLGE_LIDER","ZEHIRBAZ","TAHT_TALIPLISI"]
     }'::jsonb,
+    -- Rollerin varsayılan Türkçe etiketinin üzerine owner'ın yazdığı özel
+    -- isimler (boş obje = hepsi varsayılan) — bkz. schema_v5_migration.sql.
+    role_labels        JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT app_settings_single_row CHECK (id = 1)
 );
