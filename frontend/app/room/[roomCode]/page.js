@@ -6,6 +6,9 @@ import { getSocket } from '../../../lib/socket';
 import { getUser, isLoggedIn } from '../../../lib/auth';
 import { ROLE_LABELS, ROLE_DESCRIPTIONS, TEAM_LABELS, ALL_ROLE_KEYS } from '../../../lib/roles';
 import SeatTable from '../../../components/SeatTable';
+import { useVoiceChat } from '../../../lib/voice';
+
+const AGORA_APP_ID = process.env.NEXT_PUBLIC_AGORA_APP_ID || '';
 
 // Backend'deki sabitlerle birebir eşleşir (bkz. backend/game/gameRoom.js)
 const PHASE_DURATIONS = {
@@ -155,6 +158,17 @@ export default function RoomPage() {
   const alivePlayers = players.filter((p) => p.isAlive);
   const othersAlive = alivePlayers.filter((p) => p.userId !== user?.id);
 
+  // Sesli sohbet: Lobi dışında (rol atanmışsa) bağlan. myRole başta null olduğu için
+  // suikastçı özel kanalı rol atandıktan sonra devreye girer, gündüz/gece herkes için
+  // ana kanal oyuncu odaya girdiği anda bağlanır.
+  const voice = useVoiceChat({
+    appId: AGORA_APP_ID,
+    roomCode,
+    userId: user?.id,
+    myRole,
+    phase,
+  });
+
   function handleStartGame() {
     socketRef.current.emit('startGame');
   }
@@ -218,6 +232,8 @@ export default function RoomPage() {
 
       {errorMessage && <div className="error-banner">{errorMessage}</div>}
       {infoMessage && <div className="error-banner" style={{ background: 'rgba(58,122,77,0.2)', borderColor: 'var(--good)', color: '#bfe6cb' }}>{infoMessage}</div>}
+
+      <VoiceStatusBar voice={voice} phase={phase} />
 
       <SeatTable
         players={players}
@@ -485,6 +501,36 @@ function TargetSelect({ players, value, onChange }) {
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function VoiceStatusBar({ voice, phase }) {
+  if (!process.env.NEXT_PUBLIC_AGORA_APP_ID) {
+    return (
+      <p className="small center" style={{ marginBottom: 12 }}>
+        🔇 Sesli sohbet yapılandırılmamış (NEXT_PUBLIC_AGORA_APP_ID eksik).
+      </p>
+    );
+  }
+
+  if (voice.micError) {
+    return <div className="error-banner">{voice.micError}</div>;
+  }
+
+  return (
+    <div className="card" style={{ padding: '10px 16px', marginBottom: 16 }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+        <span className="small">
+          {phase === 'NIGHT' ? '🌙 Gece — genel kanal sessiz' : '🔊 Genel kanal açık'}
+          {voice.joined ? '' : ' (bağlanıyor...)'}
+        </span>
+        {voice.canUseNightChannel && (
+          <button className={voice.nightMicOn ? 'danger' : 'secondary'} onClick={voice.toggleNightMic}>
+            {voice.nightMicOn ? '🎙️ Gizli Kanalda Konuşuyorsun (Kapat)' : '🤫 Gizli Kanalda Konuş'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
