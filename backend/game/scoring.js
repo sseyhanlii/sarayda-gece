@@ -8,6 +8,7 @@ const { ROLE, TEAM } = require('./roles');
 const BASE_POINTS = {
   TEAM_WIN: 20,        // takım (İyiler ya da Suikastçılar) olarak kazanmanın taban puanı
   SOLO_WIN: 50,        // Taht Taliplisi tek başına kazanırsa
+  LOVERS_WIN: 40,      // Aşko'nun eşleştirdiği iki oyuncu son ikiye kalıp birlikte kazanırsa
   SURVIVAL_BONUS: 3,   // maç sonunda hayatta kalan her oyuncuya ek puan
   PRINCESS_SURVIVED_BONUS: 10, // Gizli Prenses hayatta kalıp İyiler kazandıysa ek puan
   DECOY_SACRIFICE_BONUS: 8,    // Sahte Prenses görevini yaparak öldüyse (yem oldu) ek puan
@@ -37,11 +38,15 @@ function calculateMatchScores(gameRoom) {
 
   return players.map((player) => {
     const breakdown = { participation: BASE_POINTS.PARTICIPATION };
-    const isWinner = didPlayerWin(player, winner);
+    const isWinner = didPlayerWin(player, winner, gameRoom);
 
     if (isWinner) {
       breakdown.teamOrSoloWin =
-        player.role === ROLE.TAHT_TALIPLISI ? BASE_POINTS.SOLO_WIN : BASE_POINTS.TEAM_WIN;
+        winner === TEAM.ASIKLAR
+          ? BASE_POINTS.LOVERS_WIN
+          : player.role === ROLE.TAHT_TALIPLISI
+          ? BASE_POINTS.SOLO_WIN
+          : BASE_POINTS.TEAM_WIN;
     }
     if (player.isAlive) {
       breakdown.survivalBonus = BASE_POINTS.SURVIVAL_BONUS;
@@ -61,7 +66,12 @@ function calculateMatchScores(gameRoom) {
   });
 }
 
-function didPlayerWin(player, winnerTeam) {
+function didPlayerWin(player, winnerTeam, gameRoom) {
+  // Aşıklar kendi orijinal takımlarıyla değil, SADECE birbirleriyle kazanır —
+  // "sadece aşıklarıyla kazanabilsin köylüyle kazanamasın" isteğine karşılık gelir.
+  if (winnerTeam === TEAM.ASIKLAR) {
+    return Boolean(gameRoom?.loverUserIds?.includes(player.userId));
+  }
   if (winnerTeam === TEAM.TARAFSIZ) {
     return player.role === ROLE.TAHT_TALIPLISI; // sadece taliplinin kendisi "kazandı" sayılır
   }

@@ -17,9 +17,29 @@ CREATE TABLE users (
     is_owner        BOOLEAN NOT NULL DEFAULT FALSE, -- tek hesap: sınırsız yetki (admin atama/silme dahil)
     is_banned       BOOLEAN NOT NULL DEFAULT FALSE, -- true ise giriş engellenir
     profile_locked  BOOLEAN NOT NULL DEFAULT FALSE, -- true ise kullanıcı ad/avatarını kendi değiştiremez
+    admin_permissions JSONB NOT NULL DEFAULT '{}'::jsonb, -- owner'ın admin'e tek tek verdiği izinler
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at   TIMESTAMPTZ
 );
+
+-- Uygulama geneli ayarlar (gece/gündüz/oylama süresi, oda isimleri, rol
+-- dağılımları) — admin panelinden istenildiği zaman değiştirilebilir.
+CREATE TABLE app_settings (
+    id                 SMALLINT PRIMARY KEY DEFAULT 1,
+    night_duration_ms  INTEGER NOT NULL DEFAULT 20000,
+    day_duration_ms    INTEGER NOT NULL DEFAULT 40000,
+    vote_duration_ms   INTEGER NOT NULL DEFAULT 15000,
+    room_names         JSONB NOT NULL DEFAULT '{"4":"Fenerlikız Odası","6":"Pizza Odası","8":"Zeygen Odası"}'::jsonb,
+    role_sets          JSONB NOT NULL DEFAULT '{
+        "4": ["GIZLI_PRENSES","MUHAFIZ","BAS_CASUS","GOLGE_LIDER"],
+        "6": ["GIZLI_PRENSES","SAHTE_PRENSES","MUHAFIZ","BAS_CASUS","GOLGE_LIDER","ZEHIRBAZ"],
+        "8": ["GIZLI_PRENSES","SAHTE_PRENSES","MUHAFIZ","HEKIM","BAS_CASUS","GOLGE_LIDER","ZEHIRBAZ","TAHT_TALIPLISI"]
+    }'::jsonb,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT app_settings_single_row CHECK (id = 1)
+);
+
+INSERT INTO app_settings (id) VALUES (1);
 
 -- ---------- 2. OYUNCU İSTATİSTİKLERİ ----------
 -- Genel toplamlar burada; role-özel dağılım player_role_stats'ta.

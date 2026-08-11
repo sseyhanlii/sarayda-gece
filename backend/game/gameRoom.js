@@ -5,7 +5,7 @@
 // maç bittiğinde sonuç Postgres'e yazılır (bkz. persistGameResult).
 // ============================================================
 
-const { ROLE, TEAM, assignRoles, SUPPORTED_ROOM_SIZES } = require('./roles');
+const { ROLE, TEAM, assignRoles, SUPPORTED_ROOM_SIZES, ROLE_SETS_BY_SIZE } = require('./roles');
 
 const PHASE = {
   LOBBY: 'LOBBY',
@@ -16,13 +16,18 @@ const PHASE = {
   RESULTS: 'RESULTS',
 };
 
-const NIGHT_DURATION_MS = 15_000;
+// Bu değerler sadece HİÇ yönetici ayarı kaydedilmemişse kullanılan varsayılanlardır —
+// owner/admin artık bunları admin panelinden istediği zaman değiştirebilir
+// (bkz. server.js /api/admin/settings, GameRoom constructor'a "settings" olarak geçer).
+const NIGHT_DURATION_MS = 20_000;
 const DISCUSSION_DURATION_MS = 40_000;
 const VOTE_DURATION_MS = 15_000;
 const PENDING_EXECUTION_DURATION_MS = 15_000; // Gizli Prenses'in kartını açması için tanınan süre
 
+const BOT_NAMES = ['Bot Zeynep', 'Bot Ahmet', 'Bot Elif', 'Bot Kerem', 'Bot Deniz', 'Bot Miray', 'Bot Yusuf', 'Bot Naz'];
+
 class GameRoom {
-  constructor(roomCode, io, roomSize = 8, onGameEnded = null) {
+  constructor(roomCode, io, roomSize = 8, onGameEnded = null, settings = {}) {
     if (!SUPPORTED_ROOM_SIZES.includes(roomSize)) {
       throw new Error(`Desteklenmeyen oda boyutu: ${roomSize}. Desteklenenler: ${SUPPORTED_ROOM_SIZES.join(', ')}`);
     }
@@ -42,9 +47,21 @@ class GameRoom {
     this.poisonerUsed = false;
     this.doctorAntidoteUsed = false;
     this.doctorPoisonUsed = false;
+    this.cupidUsed = false;
+    this.loverUserIds = null; // Aşko'nun eşleştirdiği [userIdA, userIdB]
     this.decoyAssassinatedLastNight = false; // Sahte Prenses öldüyse suikastçılar bir gece pas geçer
     this.timer = null;
     this.winner = null;
+
+    // Yönetici panelinden ayarlanabilen, oda oluşturulduğu anda "dondurulan"
+    // değerler — bir oyun sürerken ayar değişse bile o odayı etkilemez, sadece
+    // BUNDAN SONRA açılacak yeni odalara uygulanır (kafa karışıklığı olmasın diye).
+    this.nightDurationMs = settings.nightDurationMs || NIGHT_DURATION_MS;
+    this.dayDurationMs = settings.dayDurationMs || DISCUSSION_DURATION_MS;
+    this.voteDurationMs = settings.voteDurationMs || VOTE_DURATION_MS;
+    this.roleSet =
+      Array.isArray(settings.roleSet) && settings.roleSet.length === roomSize ? settings.roleSet : null;
+    this.roomName = settings.roomName || null;
   }
 
   // ---------- LOBİ ----------
@@ -53,7 +70,7 @@ class GameRoom {
     // ikinci bir 'joinRoom' tetiklenmesi, sayfa yenileme ya da bağlantı kopup
     // yeniden bağlanma) yinelenen koltuk açmak yerine sadece socket bağlantısını
     // güncelle — bu, reconnect sonrası özel (hedefli) sunucu mesajlarının
-    // (Baş Casus sonucu, rol bilgisi vb.) doğru socket'e ulaşmasını sağlar.
+    // (Baş Gözcü sonucu, rol bilgisi vb.) doğru socket'e ulaşmasını sağlar.
     const existing = this.players.find((p) => p.userId === userId);
     if (existing) {
       existing.socketId = socketId;
@@ -77,6 +94,31 @@ class GameRoom {
     return this.getPublicState();
   }
 
+  // Yönetici tek tuşla odaya bir bot ekler (gerçek bir socket'i yoktur, otomatik
+  // oynar — bkz. _runBotNightActions / _runBotDayVotes). Sadece lobi fazında ve
+  // oda dolu değilken çalışır.
+  addBot() {
+    if (this.phase !== PHASE.LOBBY) return { ok: false, reason: 'Oyun başladıktan sonra bot eklenemez.' };
+    if (this.players.length >= this.roomSize) return { ok: false, reason: 'Oda dolu.' };
+    const usedNames = new Set(this.players.filter((p) => p.isBot).map((p) => p.username));
+    const name = BOT_NAMES.find((n) => !usedNames.has(n)) || `Bot ${this.players.length + 1}`;
+    const botUserId = `bot-${Math.random().toString(36).slice(2, 10)}`;
+    if (!this.hostUserId) this.hostUserId = botUserId;
+    this.players.push({
+      userId: botUserId,
+      username: name,
+      socketId: null,
+      avatarEmoji: '🤖',
+      avatarUrl: null,
+      role: null,
+      team: null,
+      isAlive: true,
+      isReady: true, // botlar her zaman hazır, kimseyi beklemez
+      isBot: true,
+    });
+    return { ok: true, publicState: this.getPublicState() };
+  }
+
   removePlayer(userId) {
     this.players = this.players.filter((p) => p.userId !== userId);
     if (this.hostUserId === userId && this.players.length > 0) {
@@ -84,7 +126,7 @@ class GameRoom {
     }
   }
 
-  // Host, lobi fazındayken bir oyuncuyu odadan atabilir (kendini atamaz).
+  // Host, lobi fazındayken bir oyuncuyu (ya da botu) odadan atabilir (kendini atamaz).
   kickPlayer(requesterUserId, targetUserId) {
     if (requesterUserId !== this.hostUserId) return { ok: false, reason: 'Sadece oda kurucusu oyuncu atabilir.' };
     if (this.phase !== PHASE.LOBBY) return { ok: false, reason: 'Oyun başladıktan sonra oyuncu atılamaz.' };
@@ -112,13 +154,15 @@ class GameRoom {
     this.poisonerUsed = false;
     this.doctorAntidoteUsed = false;
     this.doctorPoisonUsed = false;
+    this.cupidUsed = false;
+    this.loverUserIds = null;
     this.decoyAssassinatedLastNight = false;
     this.winner = null;
     this.players.forEach((p) => {
       p.role = null;
       p.team = null;
       p.isAlive = true;
-      if (clearReady) p.isReady = false;
+      if (clearReady) p.isReady = Boolean(p.isBot); // botlar hep hazır kalır
     });
   }
 
@@ -133,8 +177,7 @@ class GameRoom {
   // Oyuncu "Hazırım" durumunu değiştirir. Lobide (ilk başlangıç için) ve
   // sonuç ekranında (bir sonraki tura geçmek için) kullanılabilir. Sonuç
   // ekranındayken oda tamsa ve herkes hazırsa, oda LOBİYE KAPANMADAN otomatik
-  // olarak yeni bir tur başlatılır — "oyun bitince lobi kapanmasın, herkes
-  // hazıra basarsa devam edebilsin" isteğine karşılık gelir.
+  // olarak yeni bir tur başlatılır.
   setReady(userId, isReady) {
     if (this.phase !== PHASE.LOBBY && this.phase !== PHASE.RESULTS) {
       return { ok: false, reason: 'Şu an hazır durumu değiştirilemez.' };
@@ -166,7 +209,7 @@ class GameRoom {
     if (this.players.some((p) => !p.isReady)) {
       throw new Error('Tüm oyuncuların "Hazırım" demesi gerekiyor.');
     }
-    this.players = assignRoles(this.players, this.roomSize);
+    this.players = assignRoles(this.players, this.roomSize, this.roleSet);
     this.dayNumber = 1;
     // Her oyuncuya SADECE kendi rolünü gizlice gönder
     this.players.forEach((p) => {
@@ -175,7 +218,22 @@ class GameRoom {
         team: p.team,
       });
     });
+    // "Vampirler birbirini tanısın gece": suikastçı takımının üyeleri oyunun
+    // başında birbirinin kimliğini öğrenir (gece boyunca geçerli, tekrar
+    // sorgulamaya gerek yok — statik bir takım bilgisi).
+    this._revealAssassinTeammates();
     this._goToNight();
+  }
+
+  _revealAssassinTeammates() {
+    const assassins = this.players.filter((p) => p.team === TEAM.SUIKASTCILAR);
+    if (assassins.length < 2) return;
+    assassins.forEach((p) => {
+      const teammates = assassins
+        .filter((t) => t.userId !== p.userId)
+        .map((t) => ({ userId: t.userId, username: t.username, role: t.role }));
+      this.io.to(p.socketId).emit('teammatesRevealed', { teammates });
+    });
   }
 
   // ---------- GECE FAZI ----------
@@ -183,7 +241,8 @@ class GameRoom {
     this.phase = PHASE.NIGHT;
     this.nightActions = {};
     this._broadcastPhase();
-    this._setPhaseTimer(NIGHT_DURATION_MS, () => this._resolveNight());
+    this._setPhaseTimer(this.nightDurationMs, () => this._resolveNight());
+    this._runBotNightActions();
   }
 
   // Gece yeteneği kullanımı (client 'useAbility' event'i ile çağırır)
@@ -200,10 +259,14 @@ class GameRoom {
     const REQUIRED_ROLE = {
       GUARD_PROTECT: ROLE.MUHAFIZ,
       SPY_INVESTIGATE: ROLE.BAS_CASUS,
-      ASSASSIN_CHOOSE_TARGET: ROLE.GOLGE_LIDER,
-      POISONER_LOCK_ABILITY: ROLE.ZEHIRBAZ,
     };
-    if (REQUIRED_ROLE[abilityKey] && actor.role !== REQUIRED_ROLE[abilityKey]) {
+    if (abilityKey === 'ASSASSIN_CHOOSE_TARGET') {
+      // Suikast hedefi artık TEK bir rolün tekelinde değil — vampir takımının
+      // (Gölge Lider + Zehirbaz) TÜM üyeleri oy verebilir, çoğunluk kazanır.
+      if (actor.team !== TEAM.SUIKASTCILAR) {
+        return { ok: false, reason: 'Bu yetenek senin rolüne ait değil.' };
+      }
+    } else if (REQUIRED_ROLE[abilityKey] && actor.role !== REQUIRED_ROLE[abilityKey]) {
       return { ok: false, reason: 'Bu yetenek senin rolüne ait değil.' };
     }
 
@@ -230,12 +293,22 @@ class GameRoom {
         });
         break;
       }
-      case 'ASSASSIN_CHOOSE_TARGET':
+      case 'ASSASSIN_CHOOSE_TARGET': {
         if (this.decoyAssassinatedLastNight) {
           return { ok: false, reason: 'Bu gece suikastçılar pas geçmek zorunda.' };
         }
-        this.nightActions.assassinTargetUserId = targetUserId;
+        this.nightActions.assassinVotes = this.nightActions.assassinVotes || {};
+        this.nightActions.assassinVotes[userId] = targetUserId;
+        // Vampir takımı birbirinin oyunu canlı görsün — day-vote ile aynı UX.
+        const tally = {};
+        Object.values(this.nightActions.assassinVotes).forEach((t) => {
+          if (t) tally[t] = (tally[t] || 0) + 1;
+        });
+        this.players
+          .filter((p) => p.team === TEAM.SUIKASTCILAR)
+          .forEach((p) => this.io.to(p.socketId).emit('assassinVoteUpdate', { votes: tally }));
         break;
+      }
       case 'POISONER_LOCK_ABILITY':
         if (this.poisonerUsed) return { ok: false, reason: 'Zehirbaz gücünü zaten kullandı.' };
         this.poisonerUsed = true;
@@ -278,9 +351,64 @@ class GameRoom {
     return { ok: true };
   }
 
+  // Aşko'nun oyun boyu 1 kez kullanabildiği "iki oyuncuyu aşık et" gücü.
+  submitCupidAction(userId, targetAUserId, targetBUserId) {
+    const actor = this.players.find((p) => p.userId === userId && p.role === ROLE.ASKO && p.isAlive);
+    if (!actor || this.phase !== PHASE.NIGHT) return { ok: false, reason: 'Geçersiz istek.' };
+    if (this.cupidUsed) return { ok: false, reason: 'Bu güç zaten kullanıldı.' };
+    if (!targetAUserId || !targetBUserId || targetAUserId === targetBUserId) {
+      return { ok: false, reason: 'İki farklı oyuncu seçmelisin.' };
+    }
+    const a = this.players.find((p) => p.userId === targetAUserId && p.isAlive);
+    const b = this.players.find((p) => p.userId === targetBUserId && p.isAlive);
+    if (!a || !b) return { ok: false, reason: 'Geçersiz hedef.' };
+
+    this.cupidUsed = true;
+    this.loverUserIds = [targetAUserId, targetBUserId];
+    const lovers = [
+      { userId: a.userId, username: a.username },
+      { userId: b.userId, username: b.username },
+    ];
+    [a, b].forEach((lover) => {
+      this.io.to(lover.socketId).emit('loverRevealed', { lovers });
+    });
+    this.io.to(actor.socketId).emit('abilityResult', { abilityKey: 'CUPID_MATCH_LOVERS', result: 'OK', lovers });
+    return { ok: true };
+  }
+
+  // Aşk kırığı zinciri: aşıklardan biri ölürse diğeri de hemen ölür — "sadece
+  // birlikte kazanabilirler" kuralının doğal bir sonucu. deaths dizisini
+  // (henüz uygulanmamış, sadece toplanmış ölüm listesini) yerinde günceller.
+  _applyLoverCascade(deaths) {
+    if (!this.loverUserIds) return;
+    const initial = [...deaths];
+    initial.forEach(({ userId }) => {
+      if (!this.loverUserIds.includes(userId)) return;
+      const otherId = this.loverUserIds.find((id) => id !== userId);
+      const other = this.players.find((p) => p.userId === otherId);
+      if (other && other.isAlive && !deaths.some((d) => d.userId === otherId)) {
+        deaths.push({ userId: otherId, cause: 'ASIK_ACISI' });
+      }
+    });
+  }
+
   _resolveNight() {
-    const { protectedUserId, assassinTargetUserId, antidoteUserId, doctorPoisonUserId } = this.nightActions;
+    const { protectedUserId, antidoteUserId, doctorPoisonUserId, assassinVotes } = this.nightActions;
     const deaths = [];
+
+    // Vampir takımının oyladığı hedef: en çok oy alan kazanır (day-vote ile
+    // aynı mantık). Eşitlikte kimse ölmez (o gece suikast girişimi başarısız).
+    let assassinTargetUserId = null;
+    if (assassinVotes) {
+      const tally = {};
+      Object.values(assassinVotes).forEach((t) => {
+        if (t) tally[t] = (tally[t] || 0) + 1;
+      });
+      const sorted = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+      if (sorted.length > 0 && !(sorted.length > 1 && sorted[1][1] === sorted[0][1])) {
+        assassinTargetUserId = sorted[0][0];
+      }
+    }
 
     // Suikast hedefi: korunmuyorsa ve panzehirle kurtarılmıyorsa ölür
     if (assassinTargetUserId) {
@@ -291,6 +419,9 @@ class GameRoom {
     if (doctorPoisonUserId) {
       deaths.push({ userId: doctorPoisonUserId, cause: 'ZEHIR' });
     }
+
+    // Aşk kırığı zinciri (bkz. yukarısı)
+    this._applyLoverCascade(deaths);
 
     deaths.forEach(({ userId, cause }) => {
       const victim = this.players.find((p) => p.userId === userId);
@@ -311,6 +442,11 @@ class GameRoom {
     this.io.to(this.roomCode).emit('nightResult', {
       deaths: deaths.map((d) => ({ userId: d.userId, cause: d.cause })),
     });
+    // ÖNEMLİ: ölümler sadece 'nightResult' ile değil, players[] listesindeki
+    // isAlive alanını da güncelleyen bir 'roomUpdate' ile yayınlanmalı —
+    // aksi halde istemcideki oturma düzeni/oy listesi/sesli sohbet mute mantığı
+    // (hepsi `players` state'ine bakıyor) hiçbir zaman "öldü" durumunu görmez.
+    this.io.to(this.roomCode).emit('roomUpdate', this.getPublicState());
 
     const winner = this._checkWinCondition();
     if (winner) return this._endGame(winner);
@@ -322,14 +458,15 @@ class GameRoom {
   _goToDayDiscussion() {
     this.phase = PHASE.DAY_DISCUSSION;
     this._broadcastPhase();
-    this._setPhaseTimer(DISCUSSION_DURATION_MS, () => this._goToVote());
+    this._setPhaseTimer(this.dayDurationMs, () => this._goToVote());
   }
 
   _goToVote() {
     this.phase = PHASE.DAY_VOTE;
     this.votes = {};
     this._broadcastPhase();
-    this._setPhaseTimer(VOTE_DURATION_MS, () => this._resolveVote());
+    this._setPhaseTimer(this.voteDurationMs, () => this._resolveVote());
+    this._runBotDayVotes();
   }
 
   castVote(voterUserId, targetUserId) {
@@ -378,6 +515,17 @@ class GameRoom {
     this.pendingExecutionTargetUserId = targetUserId;
     this.io.to(this.roomCode).emit('pendingExecution', { targetUserId });
     this._setPhaseTimer(PENDING_EXECUTION_DURATION_MS, () => this._executePlayer(targetUserId));
+
+    // Bot Gizli Prenses her zaman kartını açar (asla bluff yapmaz) — aksi
+    // halde bot oyunu tıkardı, kimse onun adına claimPrincess çağıramaz.
+    const target = this.players.find((p) => p.userId === targetUserId);
+    if (target?.isBot && target.role === ROLE.GIZLI_PRENSES && !this.princessRevealUsed) {
+      setTimeout(() => {
+        if (this.phase === PHASE.PENDING_EXECUTION && this.pendingExecutionTargetUserId === targetUserId) {
+          this.claimPrincess(targetUserId);
+        }
+      }, 1200);
+    }
   }
 
   // Gizli Prenses'in idam iptal mekaniği: idam edilecek kişi Prenses ise
@@ -401,13 +549,25 @@ class GameRoom {
 
   _executePlayer(userId) {
     this.pendingExecutionTargetUserId = null;
-    const player = this.players.find((p) => p.userId === userId);
-    if (player) {
-      player.isAlive = false;
-      player.diedOnDay = this.dayNumber;
-      player.diedCause = 'IDAM';
-    }
-    this.io.to(this.roomCode).emit('executionResult', { userId, roleReveal: player?.role });
+    const deaths = [{ userId, cause: 'IDAM' }];
+    this._applyLoverCascade(deaths); // idam edilen bir aşıksa, diğeri de kalbi kırılarak ölür
+
+    deaths.forEach((d) => {
+      const player = this.players.find((p) => p.userId === d.userId);
+      if (player) {
+        player.isAlive = false;
+        player.diedOnDay = this.dayNumber;
+        player.diedCause = d.cause;
+      }
+    });
+
+    const executedPlayer = this.players.find((p) => p.userId === userId);
+    this.io.to(this.roomCode).emit('executionResult', {
+      userId,
+      roleReveal: executedPlayer?.role,
+      extraDeaths: deaths.filter((d) => d.userId !== userId), // kalbi kırılan aşık, varsa
+    });
+    this.io.to(this.roomCode).emit('roomUpdate', this.getPublicState());
 
     const winner = this._checkWinCondition();
     if (winner) return this._endGame(winner);
@@ -419,9 +579,84 @@ class GameRoom {
     this._goToNight();
   }
 
+  // ---------- BOTLARIN OTOMATİK OYNAMASI ----------
+  _runBotNightActions() {
+    const bots = this.players.filter((p) => p.isBot && p.isAlive);
+    bots.forEach((bot) => {
+      const delay = 1500 + Math.floor(Math.random() * 3000);
+      setTimeout(() => {
+        if (this.phase !== PHASE.NIGHT) return; // faz değişmişse (round sıfırlanmış olabilir) sessizce çık
+        this._botActNight(bot);
+      }, delay);
+    });
+  }
+
+  _botActNight(bot) {
+    const others = this.players.filter((p) => p.isAlive && p.userId !== bot.userId);
+    if (!others.length) return;
+    const randomOf = (list) => list[Math.floor(Math.random() * list.length)];
+
+    switch (bot.role) {
+      case ROLE.MUHAFIZ:
+        this.submitNightAction(bot.userId, 'GUARD_PROTECT', randomOf(others).userId);
+        break;
+      case ROLE.BAS_CASUS:
+        this.submitNightAction(bot.userId, 'SPY_INVESTIGATE', randomOf(others).userId);
+        break;
+      case ROLE.GOLGE_LIDER:
+      case ROLE.ZEHIRBAZ: {
+        const nonTeammates = others.filter((p) => p.team !== TEAM.SUIKASTCILAR);
+        const pool = nonTeammates.length ? nonTeammates : others;
+        this.submitNightAction(bot.userId, 'ASSASSIN_CHOOSE_TARGET', randomOf(pool).userId);
+        break;
+      }
+      case ROLE.HEKIM:
+        if (!this.doctorAntidoteUsed && Math.random() < 0.6) {
+          this.submitDoctorAction(bot.userId, 'antidote', randomOf(others).userId);
+        } else if (!this.doctorPoisonUsed && Math.random() < 0.2) {
+          this.submitDoctorAction(bot.userId, 'poison', randomOf(others).userId);
+        }
+        break;
+      case ROLE.ASKO:
+        if (!this.cupidUsed && others.length >= 2) {
+          const shuffled = [...others].sort(() => Math.random() - 0.5);
+          this.submitCupidAction(bot.userId, shuffled[0].userId, shuffled[1].userId);
+        }
+        break;
+      default:
+        break; // pasif roller (Sahte Prenses, Gizli Prenses, Taht Taliplisi) gece bir şey yapmaz
+    }
+  }
+
+  _runBotDayVotes() {
+    const bots = this.players.filter((p) => p.isBot && p.isAlive);
+    bots.forEach((bot) => {
+      const delay = 1000 + Math.floor(Math.random() * 3000);
+      setTimeout(() => {
+        if (this.phase !== PHASE.DAY_VOTE) return;
+        const others = this.players.filter((p) => p.isAlive && p.userId !== bot.userId);
+        if (!others.length) return;
+        const target = others[Math.floor(Math.random() * others.length)];
+        this.castVote(bot.userId, target.userId);
+      }, delay);
+    });
+  }
+
   // ---------- KAZANMA KOŞULLARI ----------
   _checkWinCondition() {
     const alive = this.players.filter((p) => p.isAlive);
+
+    // Aşıklar: eğer hayatta kalan SADECE ikisiyse (başka kimse kalmadıysa)
+    // takımlarından bağımsız olarak birlikte kazanırlar — en yüksek öncelik,
+    // çünkü "sadece aşıklarıyla kazanabilsin köylüyle kazanamasın" isteğidir.
+    if (
+      this.loverUserIds &&
+      alive.length === 2 &&
+      this.loverUserIds.every((id) => alive.some((p) => p.userId === id))
+    ) {
+      return TEAM.ASIKLAR;
+    }
+
     const princess = this.players.find((p) => p.role === ROLE.GIZLI_PRENSES);
     const claimant = this.players.find((p) => p.role === ROLE.TAHT_TALIPLISI);
     const aliveEvil = alive.filter((p) => p.team === TEAM.SUIKASTCILAR);
@@ -506,8 +741,10 @@ class GameRoom {
     return {
       roomCode: this.roomCode,
       roomSize: this.roomSize,
+      roomName: this.roomName,
       hostUserId: this.hostUserId,
       phase: this.phase,
+      roleSet: this.roleSet || ROLE_SETS_BY_SIZE[this.roomSize] || [],
       players: this.players.map((p) => ({
         userId: p.userId,
         username: p.username,
@@ -515,6 +752,7 @@ class GameRoom {
         avatarUrl: p.avatarUrl || null,
         isAlive: p.isAlive,
         isReady: Boolean(p.isReady),
+        isBot: Boolean(p.isBot),
       })),
     };
   }

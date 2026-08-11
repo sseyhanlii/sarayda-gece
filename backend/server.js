@@ -15,7 +15,7 @@ const { RtcTokenBuilder, RtcRole } = require('agora-token');
 
 const { GameRoom, PHASE } = require('./game/gameRoom');
 const { calculateMatchScores } = require('./game/scoring');
-const { SUPPORTED_ROOM_SIZES } = require('./game/roles');
+const { SUPPORTED_ROOM_SIZES, TEAM, ROLE_DEFINITIONS, ALL_ROLE_KEYS } = require('./game/roles');
 
 const app = express();
 app.use(cors());
@@ -141,6 +141,99 @@ async function ownerMiddleware(req, res, next) {
   next();
 }
 
+// ---------- YÖNETİCİ İZİN SİSTEMİ ----------
+// "adminlerin görevlerini açıp kapatabileyim, her yeteneği açmayalım onlara"
+// isteğine karşılık: owner HER ZAMAN tam yetkili, ama normal admin'lerin her
+// bir yeteneği (kullanıcı yönetimi, hesap silme, oda yönetimi, fotoğraf onayı,
+// oyun ayarlarını düzenleme) owner tarafından TEK TEK açılıp kapatılabilir.
+// Varsayılan: yeni admin'de HİÇBİR izin yoktur (admin_permissions = {}).
+const ADMIN_PERMISSIONS = ['manage_users', 'delete_users', 'manage_rooms', 'review_avatars', 'edit_settings'];
+
+function hasPermission(userRow, key) {
+  if (!userRow) return false;
+  if (userRow.is_owner) return true;
+  return Boolean(userRow.admin_permissions && userRow.admin_permissions[key]);
+}
+
+// requirePermission ZORUNLU olarak adminMiddleware'den SONRA kullanılmalı
+// (req.auth'un dolu olmasına güvenir).
+function requirePermission(key) {
+  return async (req, res, next) => {
+    try {
+      const result = await pool.query(`SELECT is_owner, admin_permissions FROM users WHERE id = $1`, [req.auth.userId]);
+      if (!hasPermission(result.rows[0], key)) {
+        return res.status(403).json({ error: 'Bu işlem için gereken izne sahip değilsin — baş yönetici sana bu yetkiyi vermeli.' });
+      }
+      next();
+    } catch (err) {
+      console.error('requirePermission hatası:', err.message);
+      res.status(500).json({ error: 'Yetki kontrolü başarısız.' });
+    }
+  };
+}
+
+// ---------- UYGULAMA AYARLARI (gece/gündüz/oylama süresi, oda isimleri, rol dağılımları) ----------
+// RAM'de tutulan bir kopya — her oda oluşturulurken buradan okunur, admin
+// panelinden değiştirilince anında güncellenir (yeniden deploy gerekmez).
+const DEFAULT_GAME_SETTINGS = {
+  night_duration_ms: 20000,
+  day_duration_ms: 40000,
+  vote_duration_ms: 15000,
+  room_names: { 4: 'Fenerlikız Odası', 6: 'Pizza Odası', 8: 'Zeygen Odası' },
+  role_sets: {
+    4: ['GIZLI_PRENSES', 'MUHAFIZ', 'BAS_CASUS', 'GOLGE_LIDER'],
+    6: ['GIZLI_PRENSES', 'SAHTE_PRENSES', 'MUHAFIZ', 'BAS_CASUS', 'GOLGE_LIDER', 'ZEHIRBAZ'],
+    8: ['GIZLI_PRENSES', 'SAHTE_PRENSES', 'MUHAFIZ', 'HEKIM', 'BAS_CASUS', 'GOLGE_LIDER', 'ZEHIRBAZ', 'TAHT_TALIPLISI'],
+  },
+};
+let gameSettings = DEFAULT_GAME_SETTINGS;
+
+async function loadGameSettings() {
+  try {
+    const result = await pool.query(`SELECT * FROM app_settings WHERE id = 1`);
+    if (result.rows[0]) {
+      const row = result.rows[0];
+      gameSettings = {
+        night_duration_ms: row.night_duration_ms,
+        day_duration_ms: row.day_duration_ms,
+        vote_duration_ms: row.vote_duration_ms,
+        room_names: row.room_names,
+        role_sets: row.role_sets,
+      };
+      console.log('Oyun ayarları veritabanından yüklendi.');
+    }
+  } catch (err) {
+    // Tablo henüz migrasyon yapılmamışsa (schema_v4 çalıştırılmadıysa) sessizce
+    // varsayılanlarla devam et — eski deploy'ları kırmayalım.
+    console.warn('app_settings okunamadı, varsayılan ayarlarla devam ediliyor:', err.message);
+  }
+}
+loadGameSettings();
+
+function validateGameSettings(body) {
+  const { nightDurationMs, dayDurationMs, voteDurationMs, roomNames, roleSets } = body;
+  if (![nightDurationMs, dayDurationMs, voteDurationMs].every((v) => Number.isInteger(v) && v >= 3000 && v <= 300000)) {
+    return 'Süreler 3-300 saniye (ms olarak 3000-300000) arasında tam sayı olmalı.';
+  }
+  if (!roomNames || typeof roomNames !== 'object') return 'Oda isimleri eksik.';
+  for (const size of SUPPORTED_ROOM_SIZES) {
+    if (!roomNames[size] || typeof roomNames[size] !== 'string' || !roomNames[size].trim()) {
+      return `${size} kişilik oda için bir isim girmelisin.`;
+    }
+  }
+  if (!roleSets || typeof roleSets !== 'object') return 'Rol dağılımları eksik.';
+  for (const size of SUPPORTED_ROOM_SIZES) {
+    const set = roleSets[size];
+    if (!Array.isArray(set) || set.length !== Number(size)) {
+      return `${size} kişilik oda için tam olarak ${size} rol seçmelisin (şu an ${set?.length ?? 0}).`;
+    }
+    if (set.some((key) => !ROLE_DEFINITIONS[key])) {
+      return `${size} kişilik oda için geçersiz bir rol seçildi.`;
+    }
+  }
+  return null;
+}
+
 // ---------- REST: PROFİL / LİDERLİK TABLOSU ----------
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Sarayda Gece backend çalışıyor.' });
@@ -196,7 +289,7 @@ app.get('/api/profile/me', authMiddleware, async (req, res) => {
   try {
     const userResult = await pool.query(
       `SELECT id, username, email, avatar_emoji, avatar_url, avatar_pending_url, avatar_status,
-              is_admin, is_owner, profile_locked, created_at
+              is_admin, is_owner, profile_locked, admin_permissions, created_at
        FROM users WHERE id = $1`,
       [req.auth.userId]
     );
@@ -306,7 +399,7 @@ app.get('/api/admin/users', adminMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.username, u.email, u.is_admin, u.is_owner, u.is_banned, u.profile_locked,
-              u.avatar_status, u.created_at,
+              u.avatar_status, u.admin_permissions, u.created_at,
               ps.total_games, ps.total_wins, ps.total_score
        FROM users u
        LEFT JOIN player_stats ps ON ps.user_id = u.id
@@ -320,7 +413,7 @@ app.get('/api/admin/users', adminMiddleware, async (req, res) => {
   }
 });
 
-app.post('/api/admin/users/:userId/ban', adminMiddleware, async (req, res) => {
+app.post('/api/admin/users/:userId/ban', adminMiddleware, requirePermission('manage_users'), async (req, res) => {
   const { banned } = req.body;
   try {
     await pool.query(`UPDATE users SET is_banned = $1 WHERE id = $2`, [Boolean(banned), req.params.userId]);
@@ -332,13 +425,37 @@ app.post('/api/admin/users/:userId/ban', adminMiddleware, async (req, res) => {
 });
 
 // Fotoğraf/isim yasağı: kullanıcı kendi profilini (ad + avatar) değiştiremesin.
-app.post('/api/admin/users/:userId/profile-lock', adminMiddleware, async (req, res) => {
+app.post('/api/admin/users/:userId/profile-lock', adminMiddleware, requirePermission('manage_users'), async (req, res) => {
   const { locked } = req.body;
   try {
     await pool.query(`UPDATE users SET profile_locked = $1 WHERE id = $2`, [Boolean(locked), req.params.userId]);
     res.json({ ok: true });
   } catch (err) {
     console.error('DB hatası (POST /api/admin/users/:userId/profile-lock):', err.message);
+    res.status(500).json({ error: 'Güncelleme başarısız.' });
+  }
+});
+
+// SADECE owner: bir admin'in tam olarak hangi yetkilere sahip olduğunu tek
+// tek açar/kapatır. "her yeteneği açmayalım onlara" isteğine karşılık —
+// yeni bir admin varsayılan olarak HİÇBİR izne sahip değildir.
+app.patch('/api/admin/users/:userId/permissions', ownerMiddleware, async (req, res) => {
+  const { permissions } = req.body;
+  if (!permissions || typeof permissions !== 'object') {
+    return res.status(400).json({ error: 'permissions nesnesi gerekli.' });
+  }
+  const cleaned = {};
+  ADMIN_PERMISSIONS.forEach((key) => {
+    cleaned[key] = Boolean(permissions[key]);
+  });
+  try {
+    const target = await pool.query(`SELECT is_owner FROM users WHERE id = $1`, [req.params.userId]);
+    if (!target.rows[0]) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
+    if (target.rows[0].is_owner) return res.status(400).json({ error: 'Baş yöneticinin izinleri sabittir (her zaman tam yetkili).' });
+    await pool.query(`UPDATE users SET admin_permissions = $1 WHERE id = $2`, [JSON.stringify(cleaned), req.params.userId]);
+    res.json({ ok: true, permissions: cleaned });
+  } catch (err) {
+    console.error('DB hatası (PATCH /api/admin/users/:userId/permissions):', err.message);
     res.status(500).json({ error: 'Güncelleme başarısız.' });
   }
 });
@@ -362,11 +479,12 @@ app.post('/api/admin/users/:userId/promote', ownerMiddleware, async (req, res) =
   }
 });
 
-// SADECE owner: hesabı KALICI olarak sil. Geçmiş maç kayıtları bozulmasın diye
+// Hesabı KALICI olarak sil. Geçmiş maç kayıtları bozulmasın diye
 // game_players/games/game_events/game_votes'taki referanslar NULL'a düşer
 // (bkz. schema_v3_migration.sql), sadece kullanıcıya özel veriler (player_stats,
-// player_role_stats) CASCADE ile silinir.
-app.delete('/api/admin/users/:userId', ownerMiddleware, async (req, res) => {
+// player_role_stats) CASCADE ile silinir. Owner her zaman yapabilir; normal
+// admin'ler SADECE owner kendilerine "delete_users" iznini verdiyse yapabilir.
+app.delete('/api/admin/users/:userId', adminMiddleware, requirePermission('delete_users'), async (req, res) => {
   try {
     const target = await pool.query(`SELECT is_owner FROM users WHERE id = $1`, [req.params.userId]);
     if (!target.rows[0]) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
@@ -380,7 +498,7 @@ app.delete('/api/admin/users/:userId', ownerMiddleware, async (req, res) => {
 });
 
 // Bekleyen (admin onayı istenen) profil fotoğrafları.
-app.get('/api/admin/avatars/pending', adminMiddleware, async (req, res) => {
+app.get('/api/admin/avatars/pending', adminMiddleware, requirePermission('review_avatars'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, username, avatar_pending_url, avatar_status
@@ -394,7 +512,7 @@ app.get('/api/admin/avatars/pending', adminMiddleware, async (req, res) => {
   }
 });
 
-app.post('/api/admin/avatars/:userId/review', adminMiddleware, async (req, res) => {
+app.post('/api/admin/avatars/:userId/review', adminMiddleware, requirePermission('review_avatars'), async (req, res) => {
   const { approve } = req.body;
   try {
     if (approve) {
@@ -426,7 +544,7 @@ app.get('/api/admin/rooms', adminMiddleware, (req, res) => {
   res.json([...activeRooms.values()].map((room) => room.getAdminSummary()));
 });
 
-app.post('/api/admin/rooms/:roomCode/end', adminMiddleware, (req, res) => {
+app.post('/api/admin/rooms/:roomCode/end', adminMiddleware, requirePermission('manage_rooms'), (req, res) => {
   const room = activeRooms.get(req.params.roomCode);
   if (!room) return res.status(404).json({ error: 'Oda bulunamadı.' });
   if (room.phase === PHASE.LOBBY) {
@@ -438,6 +556,76 @@ app.post('/api/admin/rooms/:roomCode/end', adminMiddleware, (req, res) => {
     io.to(req.params.roomCode).emit('adminEndedGame');
   }
   res.json({ ok: true });
+});
+
+// Yönetici tek tuşla odaya bir bot ekler (lobi dolmuyorsa, arkadaş beklemeden
+// test/eğlence için oynanabilsin diye).
+app.post('/api/admin/rooms/:roomCode/add-bot', adminMiddleware, requirePermission('manage_rooms'), (req, res) => {
+  const room = activeRooms.get(req.params.roomCode);
+  if (!room) return res.status(404).json({ error: 'Oda bulunamadı.' });
+  const result = room.addBot();
+  if (!result.ok) return res.status(400).json({ error: result.reason });
+  io.to(req.params.roomCode).emit('roomUpdate', result.publicState);
+  res.json({ ok: true });
+});
+
+// ---------- REST: OYUN AYARLARI ----------
+// Herkese açık (oturum gerektirmez) — lobi ve oda sayfaları güncel oda
+// isimlerini/rol dağılımlarını/süreleri buradan çeker, böylece owner ayarı
+// değiştirdiği anda YENİ BİR DEPLOY GEREKMEDEN istemciye yansır.
+app.get('/api/settings/public', (req, res) => {
+  res.json({
+    nightDurationMs: gameSettings.night_duration_ms,
+    dayDurationMs: gameSettings.day_duration_ms,
+    voteDurationMs: gameSettings.vote_duration_ms,
+    roomNames: gameSettings.room_names,
+    roleSets: gameSettings.role_sets,
+  });
+});
+
+app.get('/api/admin/settings', adminMiddleware, (req, res) => {
+  res.json({
+    nightDurationMs: gameSettings.night_duration_ms,
+    dayDurationMs: gameSettings.day_duration_ms,
+    voteDurationMs: gameSettings.vote_duration_ms,
+    roomNames: gameSettings.room_names,
+    roleSets: gameSettings.role_sets,
+    allRoleKeys: ALL_ROLE_KEYS,
+    supportedRoomSizes: SUPPORTED_ROOM_SIZES,
+  });
+});
+
+// Owner her zaman değiştirebilir; normal admin sadece "edit_settings" izni
+// verilmişse. Değişiklik anında RAM'deki gameSettings'e yansır ve BUNDAN
+// SONRA oluşturulacak odalarda kullanılır (aktif odalar etkilenmez).
+app.put('/api/admin/settings', adminMiddleware, requirePermission('edit_settings'), async (req, res) => {
+  const error = validateGameSettings(req.body);
+  if (error) return res.status(400).json({ error });
+  const { nightDurationMs, dayDurationMs, voteDurationMs, roomNames, roleSets } = req.body;
+  try {
+    await pool.query(
+      `UPDATE app_settings SET
+         night_duration_ms = $1,
+         day_duration_ms = $2,
+         vote_duration_ms = $3,
+         room_names = $4,
+         role_sets = $5,
+         updated_at = now()
+       WHERE id = 1`,
+      [nightDurationMs, dayDurationMs, voteDurationMs, JSON.stringify(roomNames), JSON.stringify(roleSets)]
+    );
+    gameSettings = {
+      night_duration_ms: nightDurationMs,
+      day_duration_ms: dayDurationMs,
+      vote_duration_ms: voteDurationMs,
+      room_names: roomNames,
+      role_sets: roleSets,
+    };
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DB hatası (PUT /api/admin/settings):', err.message);
+    res.status(500).json({ error: 'Ayarlar kaydedilemedi — schema_v4_migration.sql çalıştırıldı mı?' });
+  }
 });
 
 // ---------- HTTP + SOCKET.IO KURULUMU ----------
@@ -466,7 +654,7 @@ io.use(async (socket, next) => {
     // (admin yetkisi burada okunuyor ki "oda dolu olsa da gizlice izleme"
     // özelliği için istemciye güvenmeden sunucu tarafında doğrulayabilelim).
     const result = await pool.query(
-      `SELECT username, avatar_emoji, avatar_url, is_banned, is_admin FROM users WHERE id = $1`,
+      `SELECT username, avatar_emoji, avatar_url, is_banned, is_admin, is_owner, admin_permissions FROM users WHERE id = $1`,
       [decoded.userId]
     );
     const row = result.rows[0];
@@ -477,6 +665,8 @@ io.use(async (socket, next) => {
       avatarEmoji: row.avatar_emoji,
       avatarUrl: row.avatar_url,
       isAdmin: row.is_admin,
+      isOwner: row.is_owner,
+      adminPermissions: row.admin_permissions || {},
     };
     next();
   } catch {
@@ -485,15 +675,27 @@ io.use(async (socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  const { userId, username, avatarEmoji, avatarUrl, isAdmin } = socket.user;
+  const { userId, username, avatarEmoji, avatarUrl, isAdmin, isOwner, adminPermissions } = socket.user;
+
+  function canManageRooms() {
+    return isOwner || Boolean(adminPermissions?.manage_rooms);
+  }
 
   // ---- LOBİ ----
   socket.on('createRoom', ({ roomSize } = {}) => {
     const size = SUPPORTED_ROOM_SIZES.includes(roomSize) ? roomSize : 8;
     const roomCode = generateRoomCode();
+    const roleSet = gameSettings.role_sets?.[size] || gameSettings.role_sets?.[String(size)];
+    const roomSettings = {
+      nightDurationMs: gameSettings.night_duration_ms,
+      dayDurationMs: gameSettings.day_duration_ms,
+      voteDurationMs: gameSettings.vote_duration_ms,
+      roleSet,
+      roomName: gameSettings.room_names?.[size] || gameSettings.room_names?.[String(size)],
+    };
     const room = new GameRoom(roomCode, io, size, (finishedRoom) => {
       persistGameResult(finishedRoom).catch((err) => console.error('persistGameResult hata:', err));
-    });
+    }, roomSettings);
     activeRooms.set(roomCode, room);
     room.addPlayer(userId, username, socket.id, avatarEmoji, avatarUrl);
     socket.join(roomCode);
@@ -526,6 +728,26 @@ io.on('connection', (socket) => {
         const player = room.players.find((p) => p.userId === userId);
         if (player?.role) {
           socket.emit('gameStarted', { yourRole: player.role, team: player.team });
+          // Vampir takım arkadaşları ve aşk eşleşmesi de statik bilgiler —
+          // reconnect sonrası yeniden gönderilmezse oyuncu bunları unutmuş gibi görünür.
+          if (player.team === TEAM.SUIKASTCILAR) {
+            const teammates = room.players
+              .filter((p) => p.team === TEAM.SUIKASTCILAR && p.userId !== userId)
+              .map((p) => ({ userId: p.userId, username: p.username, role: p.role }));
+            if (teammates.length) socket.emit('teammatesRevealed', { teammates });
+          }
+          if (room.loverUserIds?.includes(userId)) {
+            const partnerId = room.loverUserIds.find((id) => id !== userId);
+            const partner = room.players.find((p) => p.userId === partnerId);
+            if (partner) {
+              socket.emit('loverRevealed', {
+                lovers: [
+                  { userId, username: player.username },
+                  { userId: partnerId, username: partner.username },
+                ],
+              });
+            }
+          }
         }
         socket.emit('phaseChanged', { phase: room.phase, dayNumber: room.dayNumber });
       }
@@ -541,7 +763,7 @@ io.on('connection', (socket) => {
   // gördüğü genel yayınları (oturma düzeni, faz, ölümler, gündüz sohbeti) alır;
   // oyuncuların özel gece aksiyonu sonuçlarını GÖRMEZ.
   socket.on('adminSpectateRoom', ({ roomCode }) => {
-    if (!isAdmin) return socket.emit('error', { message: 'Yetkisiz.' });
+    if (!isAdmin || !canManageRooms()) return socket.emit('error', { message: 'Yetkisiz.' });
     const room = activeRooms.get(roomCode);
     if (!room) return socket.emit('error', { message: 'Oda bulunamadı.' });
     socket.join(roomCode);
@@ -615,7 +837,7 @@ io.on('connection', (socket) => {
   });
 
   // ---- GECE YETENEKLERİ ----
-  socket.on('useAbility', ({ abilityKey, targetUserId, mode }) => {
+  socket.on('useAbility', ({ abilityKey, targetUserId, mode, targetUserId2 }) => {
     const room = activeRooms.get(socket.data.roomCode);
     if (!room) return;
     const result =
@@ -623,6 +845,8 @@ io.on('connection', (socket) => {
         ? room.submitDoctorAction(userId, mode, targetUserId)
         : abilityKey === 'QUERY_IS_PRINCESS'
         ? room.submitShadowLeaderQuery(userId, targetUserId)
+        : abilityKey === 'CUPID_MATCH_LOVERS'
+        ? room.submitCupidAction(userId, targetUserId, targetUserId2)
         : room.submitNightAction(userId, abilityKey, targetUserId);
     if (!result.ok) socket.emit('error', { message: result.reason });
   });
@@ -680,6 +904,9 @@ async function persistGameResult(gameRoom) {
     for (let i = 0; i < scores.length; i++) {
       const scoreEntry = scores[i];
       const player = gameRoom.players.find((p) => p.userId === scoreEntry.userId);
+      // Botların gerçek bir kullanıcı hesabı (UUID) yok — istatistik/kayıt
+      // tablolarına yazmaya çalışmak FK/UUID tip hatası verir, o yüzden atla.
+      if (player?.isBot) continue;
       // seat_number burada gerçek oturma sırasını değil, sadece game_players
       // tablosundaki UNIQUE(game_id, seat_number) kısıtını karşılayan benzersiz
       // bir indeks olarak kullanılıyor.
