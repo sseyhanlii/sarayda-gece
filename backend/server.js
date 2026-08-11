@@ -180,10 +180,12 @@ const DEFAULT_GAME_SETTINGS = {
   day_duration_ms: 40000,
   vote_duration_ms: 15000,
   room_names: { 4: 'Fenerlikız Odası', 6: 'Pizza Odası', 8: 'Zeygen Odası' },
+  // NOT (düzeltme): ASKO daha önce hiçbir sette yoktu, bu yüzden hiçbir odada
+  // çıkmıyordu — 6/8 kişilik setlerde SAHTE_PRENSES'in yerine eklendi.
   role_sets: {
     4: ['GIZLI_PRENSES', 'MUHAFIZ', 'BAS_CASUS', 'GOLGE_LIDER'],
-    6: ['GIZLI_PRENSES', 'SAHTE_PRENSES', 'MUHAFIZ', 'BAS_CASUS', 'GOLGE_LIDER', 'ZEHIRBAZ'],
-    8: ['GIZLI_PRENSES', 'SAHTE_PRENSES', 'MUHAFIZ', 'HEKIM', 'BAS_CASUS', 'GOLGE_LIDER', 'ZEHIRBAZ', 'TAHT_TALIPLISI'],
+    6: ['GIZLI_PRENSES', 'ASKO', 'MUHAFIZ', 'BAS_CASUS', 'GOLGE_LIDER', 'ZEHIRBAZ'],
+    8: ['GIZLI_PRENSES', 'ASKO', 'MUHAFIZ', 'HEKIM', 'BAS_CASUS', 'GOLGE_LIDER', 'ZEHIRBAZ', 'TAHT_TALIPLISI'],
   },
   // Rol isimleri için owner'ın ROLE_DEFINITIONS'daki varsayılan etiketin üzerine
   // yazdığı özel isimler — boş obje = hiçbiri özelleştirilmemiş, varsayılan

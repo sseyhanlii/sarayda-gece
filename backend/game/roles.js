@@ -105,12 +105,18 @@ const ASSASSIN_TEAM_ROLES = [ROLE.GOLGE_LIDER, ROLE.ZEHIRBAZ];
 // Oda boyutuna göre VARSAYILAN rol seti. Yönetici paneli üzerinden owner/admin
 // bunu istediği zaman değiştirebilir (bkz. server.js /api/admin/settings) —
 // buradaki değerler sadece hiç ayar kaydedilmemişse kullanılan ilk varsayılandır.
+// NOT (düzeltme): ASKO (Aşko) rolü eklendiğinde bu setlere hiç dahil
+// edilmemişti — rol kodda tam çalışır durumdaydı ama HİÇBİR odada gerçekten
+// dağıtılmıyordu, bu yüzden hiçbir maçta çıkmıyordu. 4 kişilik oda zaten en
+// sıkışık dağılım olduğu için değiştirilmedi; 6 ve 8 kişilik setlerde
+// SAHTE_PRENSES (dublör) çıkarılıp yerine ASKO eklendi (dublör admin panelinden
+// "Rol Dağılımları" ile istenirse geri eklenebilir).
 const ROLE_SETS_BY_SIZE = {
   4: [ROLE.GIZLI_PRENSES, ROLE.MUHAFIZ, ROLE.BAS_CASUS, ROLE.GOLGE_LIDER],
-  6: [ROLE.GIZLI_PRENSES, ROLE.SAHTE_PRENSES, ROLE.MUHAFIZ, ROLE.BAS_CASUS, ROLE.GOLGE_LIDER, ROLE.ZEHIRBAZ],
+  6: [ROLE.GIZLI_PRENSES, ROLE.ASKO, ROLE.MUHAFIZ, ROLE.BAS_CASUS, ROLE.GOLGE_LIDER, ROLE.ZEHIRBAZ],
   8: [
     ROLE.GIZLI_PRENSES,
-    ROLE.SAHTE_PRENSES,
+    ROLE.ASKO,
     ROLE.MUHAFIZ,
     ROLE.HEKIM,
     ROLE.BAS_CASUS,

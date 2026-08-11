@@ -32,8 +32,8 @@ CREATE TABLE app_settings (
     room_names         JSONB NOT NULL DEFAULT '{"4":"Fenerlikız Odası","6":"Pizza Odası","8":"Zeygen Odası"}'::jsonb,
     role_sets          JSONB NOT NULL DEFAULT '{
         "4": ["GIZLI_PRENSES","MUHAFIZ","BAS_CASUS","GOLGE_LIDER"],
-        "6": ["GIZLI_PRENSES","SAHTE_PRENSES","MUHAFIZ","BAS_CASUS","GOLGE_LIDER","ZEHIRBAZ"],
-        "8": ["GIZLI_PRENSES","SAHTE_PRENSES","MUHAFIZ","HEKIM","BAS_CASUS","GOLGE_LIDER","ZEHIRBAZ","TAHT_TALIPLISI"]
+        "6": ["GIZLI_PRENSES","ASKO","MUHAFIZ","BAS_CASUS","GOLGE_LIDER","ZEHIRBAZ"],
+        "8": ["GIZLI_PRENSES","ASKO","MUHAFIZ","HEKIM","BAS_CASUS","GOLGE_LIDER","ZEHIRBAZ","TAHT_TALIPLISI"]
     }'::jsonb,
     -- Rollerin varsayılan Türkçe etiketinin üzerine owner'ın yazdığı özel
     -- isimler (boş obje = hepsi varsayılan) — bkz. schema_v5_migration.sql.
