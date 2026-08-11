@@ -40,6 +40,11 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
   const [dayMicOn, setDayMicOn] = useState(false);
   const [nightMicOn, setNightMicOn] = useState(false);
   const [joined, setJoined] = useState(false);
+  // Oyuncunun kendi tercihi: gündüz kanalında mikrofonunu kendi isteğiyle
+  // kapatmış mı? Bu, gece fazındaki ZORUNLU susturmadan farklı — sadece
+  // zorunlu olmayan (gece dışı) durumlarda oyuncu kendi mikrofonunu
+  // açıp kapatabilsin diye eklendi.
+  const [dayMicManuallyOff, setDayMicManuallyOff] = useState(false);
 
   const dayClientRef = useRef(null);
   const nightClientRef = useRef(null);
@@ -123,10 +128,18 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
   useEffect(() => {
     const track = localTrackRef.current;
     if (!track) return;
-    const shouldBeMuted = phase === 'NIGHT';
+    const isForcedMute = phase === 'NIGHT'; // zorunlu durum: gece herkes sessiz, oyuncu bunu değiştiremez
+    const shouldBeMuted = isForcedMute || dayMicManuallyOff;
     track.setMuted(shouldBeMuted);
     setDayMicOn(!shouldBeMuted);
-  }, [phase, joined]);
+  }, [phase, joined, dayMicManuallyOff]);
+
+  // Oyuncu kendi mikrofonunu gündüz/lobi sırasında istediği zaman açıp
+  // kapatabilir — sadece gece fazındaki zorunlu susturmayı ezemez.
+  function toggleDayMic() {
+    if (phase === 'NIGHT') return; // zorunlu durumda değiştirilemez
+    setDayMicManuallyOff((prev) => !prev);
+  }
 
   // ---------- Suikastçılar için gizli gece kanalına (bir kez) katıl ----------
   useEffect(() => {
@@ -193,6 +206,8 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
     nightMicOn,
     isAssassin,
     toggleNightMic,
+    toggleDayMic,
+    canToggleDayMic: phase !== 'NIGHT',
     canUseNightChannel: isAssassin && phase === 'NIGHT',
   };
 }

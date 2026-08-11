@@ -1,13 +1,26 @@
+@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@600;700&family=Fredoka:wght@400;500;600;700&display=swap');
+
+/* ============================================================
+   Pembeli Masallar Diyarı teması 🎀✨
+   Saray artık koyu/gotik değil — pastel pembe, leylak ve altın
+   yaldızlı, peri masalı hissi veren aydınlık bir tema.
+   ============================================================ */
+
 :root {
-  --bg: #14101c;
-  --panel: #1f1830;
-  --panel-light: #2a2140;
-  --accent: #c9a24b;
-  --accent-soft: #8a6f2f;
-  --text: #f0e9dd;
-  --text-dim: #b7aec2;
-  --danger: #a33636;
-  --good: #3a7a4d;
+  --bg: #ffe4f1;
+  --bg-2: #ffd0e8;
+  --panel: #fff6fb;
+  --panel-light: #ffeaf5;
+  --accent: #ff5fa2;
+  --accent-2: #ff8fc2;
+  --accent-soft: #ffc2e0;
+  --gold: #e8a83c;
+  --text: #5a2350;
+  --text-dim: #9a6c92;
+  --danger: #e0447b;
+  --danger-soft: #ffd3e4;
+  --good: #3fae7a;
+  --shadow-pink: rgba(255, 95, 162, 0.28);
 }
 
 * {
@@ -16,10 +29,27 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top, #241a38 0%, var(--bg) 70%);
+  background: radial-gradient(circle at 15% 0%, #fff0f8 0%, var(--bg) 45%, var(--bg-2) 100%);
+  background-attachment: fixed;
   color: var(--text);
-  font-family: 'Georgia', 'Times New Roman', serif;
+  font-family: 'Fredoka', 'Segoe UI', sans-serif;
   min-height: 100vh;
+  position: relative;
+}
+
+/* Hafif "sihirli toz" pul pul efekti — sabit, hafif noktacıklarla */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.9) 1px, transparent 1.6px),
+    radial-gradient(circle, rgba(232, 168, 60, 0.55) 1px, transparent 1.6px);
+  background-size: 70px 70px, 130px 130px;
+  background-position: 0 0, 35px 65px;
+  opacity: 0.6;
+  z-index: 0;
 }
 
 a {
@@ -30,18 +60,28 @@ a {
   max-width: 720px;
   margin: 0 auto;
   padding: 32px 20px 80px;
+  position: relative;
+  z-index: 1;
 }
 
 h1, h2, h3 {
-  font-family: 'Georgia', serif;
+  font-family: 'Dancing Script', cursive;
   letter-spacing: 0.5px;
 }
 
 h1 {
   text-align: center;
   color: var(--accent);
-  font-size: 1.8rem;
+  font-size: 2.6rem;
   margin-bottom: 4px;
+  text-shadow: 0 2px 0 #fff, 0 4px 14px var(--shadow-pink);
+}
+
+h1::before, h1::after {
+  content: '✨';
+  font-size: 1.2rem;
+  margin: 0 10px;
+  vertical-align: middle;
 }
 
 .subtitle {
@@ -53,10 +93,11 @@ h1 {
 
 .card {
   background: var(--panel);
-  border: 1px solid var(--accent-soft);
-  border-radius: 10px;
+  border: 2px solid var(--accent-soft);
+  border-radius: 20px;
   padding: 24px;
   margin-bottom: 20px;
+  box-shadow: 0 8px 24px var(--shadow-pink);
 }
 
 .field {
@@ -68,47 +109,60 @@ h1 {
   margin-bottom: 6px;
   color: var(--text-dim);
   font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .field input, .field select {
   width: 100%;
-  padding: 10px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--accent-soft);
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 2px solid var(--accent-soft);
   background: var(--panel-light);
   color: var(--text);
   font-size: 1rem;
+  font-family: inherit;
+}
+
+.field input:focus, .field select:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 button {
   cursor: pointer;
   border: none;
-  border-radius: 6px;
-  padding: 10px 18px;
+  border-radius: 999px;
+  padding: 11px 22px;
   font-size: 1rem;
-  font-weight: bold;
-  background: var(--accent);
-  color: #241a10;
-  transition: opacity 0.15s;
+  font-weight: 600;
+  font-family: 'Fredoka', sans-serif;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  box-shadow: 0 4px 12px var(--shadow-pink);
+  transition: transform 0.15s, opacity 0.15s, box-shadow 0.15s;
 }
 
 button:hover {
-  opacity: 0.9;
+  opacity: 0.95;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px var(--shadow-pink);
 }
 
 button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+  transform: none;
 }
 
 button.secondary {
-  background: var(--panel-light);
-  color: var(--text);
-  border: 1px solid var(--accent-soft);
+  background: #fff;
+  color: var(--accent);
+  border: 2px solid var(--accent-soft);
+  box-shadow: none;
 }
 
 button.danger {
-  background: var(--danger);
+  background: linear-gradient(135deg, var(--danger), #ff6f9c);
   color: white;
 }
 
@@ -118,13 +172,14 @@ button.danger {
 }
 
 .error-banner {
-  background: rgba(163, 54, 54, 0.2);
-  border: 1px solid var(--danger);
-  color: #f2b8b8;
+  background: var(--danger-soft);
+  border: 2px solid var(--danger);
+  color: #9a2a53;
   padding: 10px 14px;
-  border-radius: 6px;
+  border-radius: 14px;
   margin-bottom: 16px;
   font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .player-list {
@@ -137,8 +192,8 @@ button.danger {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--accent-soft);
+  padding: 10px 12px;
+  border-bottom: 1px dashed var(--accent-soft);
 }
 
 .player-list li:last-child {
@@ -152,9 +207,10 @@ button.danger {
 
 .badge {
   display: inline-block;
-  padding: 2px 8px;
+  padding: 3px 10px;
   border-radius: 999px;
   font-size: 0.75rem;
+  font-weight: 600;
   background: var(--accent-soft);
   color: var(--text);
 }
@@ -162,28 +218,29 @@ button.danger {
 .phase-banner {
   text-align: center;
   padding: 14px;
-  border-radius: 8px;
+  border-radius: 16px;
   margin-bottom: 20px;
   font-size: 1.1rem;
-  font-weight: bold;
+  font-weight: 700;
+  font-family: 'Fredoka', sans-serif;
 }
 
 .phase-banner.night {
-  background: #1a1533;
-  color: #b7aec2;
-  border: 1px solid #3d3260;
+  background: linear-gradient(135deg, #6a4c93, #3d2b63);
+  color: #f3e6ff;
+  border: 2px solid #8a6bc9;
 }
 
 .phase-banner.day {
-  background: #3a3020;
-  color: #f0d9a0;
-  border: 1px solid var(--accent-soft);
+  background: linear-gradient(135deg, #ffe1a8, #ffc857);
+  color: #7a4a12;
+  border: 2px solid var(--gold);
 }
 
 .phase-banner.vote {
-  background: #331a1a;
-  color: #f0b0b0;
-  border: 1px solid var(--danger);
+  background: linear-gradient(135deg, var(--danger-soft), #ffb3cf);
+  color: #9a2a53;
+  border: 2px solid var(--danger);
 }
 
 .role-card {
@@ -214,9 +271,12 @@ button.danger {
 
 /* ---------- Üst gezinme çubuğu ---------- */
 .navbar {
-  background: var(--panel);
-  border-bottom: 1px solid var(--accent-soft);
+  background: rgba(255, 246, 251, 0.9);
+  backdrop-filter: blur(6px);
+  border-bottom: 2px solid var(--accent-soft);
   margin-bottom: 24px;
+  position: relative;
+  z-index: 2;
 }
 
 .navbar-inner {
@@ -231,10 +291,11 @@ button.danger {
 }
 
 .navbar-brand {
-  font-weight: bold;
+  font-family: 'Dancing Script', cursive;
+  font-weight: 700;
   color: var(--accent);
   text-decoration: none;
-  font-size: 1.05rem;
+  font-size: 1.4rem;
 }
 
 .navbar-links {
@@ -247,6 +308,7 @@ button.danger {
   color: var(--text-dim);
   text-decoration: none;
   font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .navbar-links a:hover {
@@ -270,13 +332,15 @@ button.danger {
   width: 46%;
   height: 46%;
   border-radius: 50%;
-  background: radial-gradient(circle, #3a2f1a 0%, #241c10 100%);
-  border: 3px solid var(--accent-soft);
+  background: radial-gradient(circle, #ffd9ec 0%, #ffb8dd 100%);
+  border: 3px solid var(--gold);
+  box-shadow: 0 0 30px var(--shadow-pink), inset 0 0 20px rgba(255, 255, 255, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
-  color: var(--accent);
+  color: #9a2a53;
+  font-weight: 600;
   font-size: 0.85rem;
   padding: 10px;
   white-space: pre-line;
@@ -300,11 +364,12 @@ button.danger {
   justify-content: center;
   font-size: 1.6rem;
   margin: 0 auto 6px;
+  box-shadow: 0 3px 8px rgba(255, 95, 162, 0.2);
 }
 
 .seat.host .seat-avatar {
-  border-color: var(--accent);
-  box-shadow: 0 0 8px rgba(201, 162, 75, 0.6);
+  border-color: var(--gold);
+  box-shadow: 0 0 10px rgba(232, 168, 60, 0.7);
 }
 
 .seat.dead .seat-avatar {
@@ -320,6 +385,7 @@ button.danger {
 .seat-name {
   font-size: 0.8rem;
   color: var(--text);
+  font-weight: 600;
   word-break: break-word;
 }
 

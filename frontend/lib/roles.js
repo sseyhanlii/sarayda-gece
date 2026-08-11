@@ -5,7 +5,7 @@
 // ============================================================
 
 export const ROLE_LABELS = {
-  GIZLI_PRENSES: 'Gizli Prenses',
+  GIZLI_PRENSES: 'Gizli Prenses Gubiş',
   SAHTE_PRENSES: 'Sahte Prenses / Dublör',
   MUHAFIZ: 'Kraliyet Muhafızı',
   HEKIM: 'Saray Hekimi',
@@ -21,9 +21,9 @@ export const ROLE_DESCRIPTIONS = {
   MUHAFIZ: 'Her gece 1 kişiyi suikasttan koruyabilirsin.',
   HEKIM: 'Oyun boyu 1 panzehir ve 1 zehir hakkın var.',
   BAS_CASUS: 'Her gece 1 kişinin Tehlikeli mi Masum mu olduğunu öğrenebilirsin.',
-  GOLGE_LIDER: 'Suikast hedefini sen belirlersin. Oyun boyu 1 kez birinin Prenses olup olmadığını sorgulayabilirsin.',
+  GOLGE_LIDER: 'Suikast hedefini sen belirlersin. Oyun boyu 1 kez birinin Gubiş olup olmadığını sorgulayabilirsin.',
   ZEHIRBAZ: 'Oyun boyu 1 kez bir rolün gece yeteneğini kilitleyebilirsin.',
-  TAHT_TALIPLISI: 'Prenses elenir ve sen oyun sonuna kadar hayatta kalırsan tek başına kazanırsın.',
+  TAHT_TALIPLISI: 'Gubiş elenir ve sen oyun sonuna kadar hayatta kalırsan tek başına kazanırsın.',
 };
 
 export const TEAM_LABELS = {

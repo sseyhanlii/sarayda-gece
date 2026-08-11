@@ -24,7 +24,7 @@ const ROLE = {
 const ROLE_DEFINITIONS = {
   [ROLE.GIZLI_PRENSES]: {
     team: TEAM.IYILER,
-    label: 'Gizli Prenses',
+    label: 'Gizli Prenses Gubiş',
     description: 'Kimliği gizli. Gündüz idam edilecekken 1 kez kart açıp iptal ettirebilir.',
     nightAction: false,
     oneTimePower: 'REVEAL_CANCEL_EXECUTION',
@@ -62,7 +62,7 @@ const ROLE_DEFINITIONS = {
   [ROLE.GOLGE_LIDER]: {
     team: TEAM.SUIKASTCILAR,
     label: 'Gölge Lider',
-    description: 'Suikast hedefini belirler. Oyun boyu 1 kez birinin Prenses olup olmadığını sorgulayabilir.',
+    description: 'Suikast hedefini belirler. Oyun boyu 1 kez birinin Gubiş olup olmadığını sorgulayabilir.',
     nightAction: true,
     abilityKey: 'ASSASSIN_CHOOSE_TARGET',
     oneTimePower: 'QUERY_IS_PRINCESS',
@@ -78,14 +78,14 @@ const ROLE_DEFINITIONS = {
   [ROLE.TAHT_TALIPLISI]: {
     team: TEAM.TARAFSIZ,
     label: 'Taht Taliplisi',
-    description: 'Prenses elenir ve kendisi oyun sonuna kadar hayatta kalırsa tek başına kazanır.',
+    description: 'Gubiş elenir ve kendisi oyun sonuna kadar hayatta kalırsa tek başına kazanır.',
     nightAction: false,
   },
 };
 
 // Oda boyutuna göre rol seti. Denge mantığı: suikastçı oranı her boyutta
 // kabaca 1/3'ün altında tutulur, oyun küçüldükçe en "ek/lüks" roller
-// (Hekim, Taht Taliplisi) önce çıkarılır çünkü çekirdek mekanik (Prenses,
+// (Hekim, Taht Taliplisi) önce çıkarılır çünkü çekirdek mekanik (Gubiş,
 // Muhafız, Casus, Gölge Lider) onlarsız da tam çalışır.
 const ROLE_SETS_BY_SIZE = {
   4: [ROLE.GIZLI_PRENSES, ROLE.MUHAFIZ, ROLE.BAS_CASUS, ROLE.GOLGE_LIDER],

@@ -339,7 +339,7 @@ export default function RoomPage() {
           </p>
           {myRole === 'GIZLI_PRENSES' && pendingExecutionTarget === user?.id && (
             <button className="danger" onClick={claimPrincess}>
-              BEN PRENSESİM! Kartımı Açıyorum
+              BEN GUBİŞ'İM! Kartımı Açıyorum
             </button>
           )}
         </div>
@@ -425,7 +425,7 @@ function NightActionPanel({ myRole, othersAlive, isAlive, actionSubmitted, abili
           Hedefi Belirle
         </button>
         <p className="small" style={{ marginTop: 10 }}>
-          Oyun boyu 1 kez, hedefinin Prenses olup olmadığını da sorgulayabilirsin (bu hakkı ayrı kullan).
+          Oyun boyu 1 kez, hedefinin Gubiş olup olmadığını da sorgulayabilirsin (bu hakkı ayrı kullan).
         </p>
         <button
           className="secondary"
@@ -433,7 +433,7 @@ function NightActionPanel({ myRole, othersAlive, isAlive, actionSubmitted, abili
           onClick={() => onSubmit('QUERY_IS_PRINCESS', target)}
           style={{ width: '100%' }}
         >
-          Prenses mi diye sorgula
+          Gubiş mi diye sorgula
         </button>
       </div>
     );
@@ -524,15 +524,24 @@ function VoiceStatusBar({ voice, phase }) {
         <span className="small">
           {!voice.joined
             ? '🔌 Sesli sohbete bağlanıyor...'
+            : phase === 'NIGHT'
+            ? '🌙 Gece — genel kanal zorunlu olarak sessiz'
             : voice.dayMicOn
             ? '🔊 Genel kanal açık — mikrofon aktif'
-            : '🌙 Genel kanal sessiz (mikrofon kapalı)'}
+            : '🔇 Mikrofonunu kendin kapattın'}
         </span>
-        {voice.canUseNightChannel && (
-          <button className={voice.nightMicOn ? 'danger' : 'secondary'} onClick={voice.toggleNightMic}>
-            {voice.nightMicOn ? '🎙️ Gizli Kanalda Konuşuyorsun (Kapat)' : '🤫 Gizli Kanalda Konuş'}
-          </button>
-        )}
+        <div className="row" style={{ gap: 8 }}>
+          {voice.joined && voice.canToggleDayMic && (
+            <button className={voice.dayMicOn ? 'secondary' : 'danger'} onClick={voice.toggleDayMic}>
+              {voice.dayMicOn ? '🔇 Mikrofonu Kapat' : '🎤 Mikrofonu Aç'}
+            </button>
+          )}
+          {voice.canUseNightChannel && (
+            <button className={voice.nightMicOn ? 'danger' : 'secondary'} onClick={voice.toggleNightMic}>
+              {voice.nightMicOn ? '🎙️ Gizli Kanalda Konuşuyorsun (Kapat)' : '🤫 Gizli Kanalda Konuş'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
