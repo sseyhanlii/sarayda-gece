@@ -555,6 +555,7 @@ app.post('/api/admin/rooms/:roomCode/end', adminMiddleware, requirePermission('m
     io.to(req.params.roomCode).emit('roomUpdate', room.getPublicState());
     io.to(req.params.roomCode).emit('adminEndedGame');
   }
+  broadcastLobbyRooms();
   res.json({ ok: true });
 });
 
@@ -566,6 +567,7 @@ app.post('/api/admin/rooms/:roomCode/add-bot', adminMiddleware, requirePermissio
   const result = room.addBot();
   if (!result.ok) return res.status(400).json({ error: result.reason });
   io.to(req.params.roomCode).emit('roomUpdate', result.publicState);
+  broadcastLobbyRooms();
   res.json({ ok: true });
 });
 
@@ -635,6 +637,16 @@ const io = new Server(server, { cors: { origin: '*' } });
 // roomCode -> GameRoom instance (RAM'de tutulan aktif maçlar)
 const activeRooms = new Map();
 
+// Lobi ekranındaki "şu an aktif odalar" listesi (4/6/8 kişilik ayrı bölümlerde
+// gösterilir) — herkese (giriş yapmış her kullanıcıya) gerçek zamanlı yayınlanır.
+// Odaların üye/kapasite/faz durumu her değiştiğinde broadcastLobbyRooms() çağrılır.
+function getLobbyRoomsList() {
+  return [...activeRooms.values()].map((room) => room.getLobbySummary());
+}
+function broadcastLobbyRooms() {
+  io.emit('lobbyRoomsUpdate', getLobbyRoomsList());
+}
+
 function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // karışan karakterler çıkarıldı (0/O, 1/I)
   let code;
@@ -695,12 +707,31 @@ io.on('connection', (socket) => {
     };
     const room = new GameRoom(roomCode, io, size, (finishedRoom) => {
       persistGameResult(finishedRoom).catch((err) => console.error('persistGameResult hata:', err));
+      broadcastLobbyRooms(); // maç bitip RESULTS fazına geçince lobi listesindeki durumu güncelle
     }, roomSettings);
     activeRooms.set(roomCode, room);
     room.addPlayer(userId, username, socket.id, avatarEmoji, avatarUrl);
     socket.join(roomCode);
     socket.data.roomCode = roomCode;
     io.to(roomCode).emit('roomUpdate', room.getPublicState());
+    broadcastLobbyRooms();
+  });
+
+  // Lobi ekranı ilk açıldığında (ya da yeniden odaklandığında) anlık listeyi çeker —
+  // bundan sonraki güncellemeler zaten broadcastLobbyRooms() ile otomatik gelir.
+  socket.on('requestLobbyRooms', () => {
+    socket.emit('lobbyRoomsUpdate', getLobbyRoomsList());
+  });
+
+  // Oda kurucusu, lobi ekranında beklerken tek tuşla bota koltuk açabilir
+  // (bkz. GameRoom.addBot — sadece lobi fazında, sadece host, oda dolmadan).
+  socket.on('addBotToRoom', () => {
+    const room = activeRooms.get(socket.data.roomCode);
+    if (!room) return;
+    const result = room.addBot(userId);
+    if (!result.ok) return socket.emit('error', { message: result.reason });
+    io.to(socket.data.roomCode).emit('roomUpdate', result.publicState);
+    broadcastLobbyRooms();
   });
 
   socket.on('joinRoom', ({ roomCode }) => {
@@ -721,6 +752,7 @@ io.on('connection', (socket) => {
       socket.join(roomCode);
       socket.data.roomCode = roomCode;
       io.to(roomCode).emit('roomUpdate', room.getPublicState());
+      broadcastLobbyRooms();
 
       // Reconnect: oyuncuya kendi rolünü ve mevcut fazı tekrar gönder,
       // aksi halde sayfa yenilendiğinde ekranı "rolsüz" kalır.
@@ -787,6 +819,7 @@ io.on('connection', (socket) => {
     socket.leave(socket.data.roomCode);
     io.to(socket.data.roomCode).emit('roomUpdate', room.getPublicState());
     if (room.players.length === 0) activeRooms.delete(socket.data.roomCode);
+    broadcastLobbyRooms();
   });
 
   // ---- HOST KONTROLLERİ ----
@@ -800,6 +833,7 @@ io.on('connection', (socket) => {
       io.sockets.sockets.get(result.kickedSocketId)?.leave(socket.data.roomCode);
     }
     io.to(socket.data.roomCode).emit('roomUpdate', room.getPublicState());
+    broadcastLobbyRooms();
   });
 
   socket.on('abortGame', () => {
@@ -808,6 +842,7 @@ io.on('connection', (socket) => {
     const result = room.abortGame(userId);
     if (!result.ok) return socket.emit('error', { message: result.reason });
     io.to(socket.data.roomCode).emit('roomUpdate', room.getPublicState());
+    broadcastLobbyRooms();
   });
 
   // ---- HAZIRIM (ilk başlangıç ve tur sonrası devam için) ----
@@ -819,6 +854,7 @@ io.on('connection', (socket) => {
     io.to(socket.data.roomCode).emit('roomUpdate', room.getPublicState());
     if (result.newRoundStarted) {
       io.to(socket.data.roomCode).emit('voicePhaseChanged', { phase: 'NIGHT' });
+      broadcastLobbyRooms();
     }
   });
 
@@ -831,6 +867,7 @@ io.on('connection', (socket) => {
       // Sesli sohbet: gece fazına girildiği için tüm istemcilere "night" kanal bilgisini yolla.
       // (Detaylı entegrasyon: docs/MIMARI-PLAN.md > Sesli İletişim bölümü)
       io.to(socket.data.roomCode).emit('voicePhaseChanged', { phase: 'NIGHT' });
+      broadcastLobbyRooms(); // artık LOBBY'de değil, lobi listesinde "Oyunda" görünmeli
     } catch (err) {
       socket.emit('error', { message: err.message });
     }

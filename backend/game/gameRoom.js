@@ -94,10 +94,15 @@ class GameRoom {
     return this.getPublicState();
   }
 
-  // Yönetici tek tuşla odaya bir bot ekler (gerçek bir socket'i yoktur, otomatik
-  // oynar — bkz. _runBotNightActions / _runBotDayVotes). Sadece lobi fazında ve
-  // oda dolu değilken çalışır.
-  addBot() {
+  // Oda kurucusu (host) YA DA yönetici tek tuşla odaya bir bot ekler (gerçek bir
+  // socket'i yoktur, otomatik oynar — bkz. _runBotNightActions / _runBotDayVotes).
+  // Sadece lobi fazında ve oda dolu değilken çalışır. `requesterUserId` verilirse
+  // (oyuncu tarafından tetiklenen socket yolu) sadece host çağırabilir; admin REST
+  // endpoint'i zaten kendi yetki kontrolünü yaptığı için bu parametreyi boş geçer.
+  addBot(requesterUserId = null) {
+    if (requesterUserId && this.hostUserId !== requesterUserId) {
+      return { ok: false, reason: 'Sadece oda kurucusu bot ekleyebilir.' };
+    }
     if (this.phase !== PHASE.LOBBY) return { ok: false, reason: 'Oyun başladıktan sonra bot eklenemez.' };
     if (this.players.length >= this.roomSize) return { ok: false, reason: 'Oda dolu.' };
     const usedNames = new Set(this.players.filter((p) => p.isBot).map((p) => p.username));
@@ -766,6 +771,22 @@ class GameRoom {
       dayNumber: this.dayNumber,
       playerCount: this.players.length,
       hostUserId: this.hostUserId,
+    };
+  }
+
+  // Lobi ekranındaki "şu an aktif odalar" listesi için — HERKESE (giriş yapmış
+  // her kullanıcıya) yayınlanır, bu yüzden isim/rol/hedef gibi özel bilgi
+  // içermez, sadece "katılınabilir mi" kararını vermeye yeten genel bilgi taşır.
+  getLobbySummary() {
+    const host = this.players.find((p) => p.userId === this.hostUserId);
+    return {
+      roomCode: this.roomCode,
+      roomName: this.roomName || null,
+      roomSize: this.roomSize,
+      phase: this.phase,
+      playerCount: this.players.length,
+      hostUsername: host?.username || null,
+      isJoinable: this.phase === PHASE.LOBBY && this.players.length < this.roomSize,
     };
   }
 }
