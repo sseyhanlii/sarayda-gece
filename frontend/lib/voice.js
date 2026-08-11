@@ -4,18 +4,23 @@
 // voice.js — Agora RTC ile sesli sohbet React hook'u.
 //
 // Mantık: her oda için İKİ Agora kanalı kullanılır:
-//   1) `${roomCode}-day`            -> TÜM oyuncular burada, gündüz herkes birbirini duyar.
-//   2) `${roomCode}-night-assassins` -> SADECE Gölge Lider + Zehirbaz burada, gizli kanal.
-// Gece fazına girilince day kanalındaki mikrofon otomatik kapanır (herkes için);
-// suikastçılar kendi gizli kanallarında "gizli kanalda konuş" düğmesiyle konuşabilir.
-// Diğer oyuncular gece boyunca sessizdir (dinleyecek bir şey de yoktur).
+//   1) `${roomCode}-day`            -> TÜM oyuncular burada, GECE DAHİL herkes
+//      birbirini duyabilir (kullanıcının açık isteğiyle: "gece herkes sesli
+//      konuşabilsin"). Faz artık genel kanalı otomatik susturmuyor.
+//   2) `${roomCode}-night-assassins` -> SADECE Gölge Lider + Zehirbaz burada,
+//      gece fazında kullanılan ek/gizli bir kanal (yazılı sohbetle aynı mantık).
+// Bir oyuncu ELENDİĞİNDE (isAlive=false) genel kanaldaki mikrofonu ZORUNLU
+// olarak kapanır — artık konuşamaz (ve yayın yapmadığı için kimse onu duymaz),
+// sadece izleyici kalır.
 // ============================================================
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getToken } from './auth';
 import { fetchVoiceToken } from './api';
 
 const ASSASSIN_ROLES = ['GOLGE_LIDER', 'ZEHIRBAZ'];
+const NIGHT_UID_SUFFIX = '-night';
+const SPEAKING_VOLUME_THRESHOLD = 5;
 
 // Hatanın gerçekten mikrofon izniyle mi yoksa başka bir sebeple (token, ağ,
 // sunucu yapılandırması) mi ilgili olduğunu ayırt eder — yanlış teşhise
@@ -35,23 +40,30 @@ function describeVoiceError(err) {
   return `Sesli sohbet bağlantısı kurulamadı (${code || err?.message || 'bilinmeyen hata'}). Sayfayı yenilemeyi dene.`;
 }
 
-export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
+export function useVoiceChat({ appId, roomCode, userId, myRole, phase, isAlive = true }) {
   const [micError, setMicError] = useState('');
   const [dayMicOn, setDayMicOn] = useState(false);
   const [nightMicOn, setNightMicOn] = useState(false);
   const [joined, setJoined] = useState(false);
-  // Oyuncunun kendi tercihi: gündüz kanalında mikrofonunu kendi isteğiyle
-  // kapatmış mı? Bu, gece fazındaki ZORUNLU susturmadan farklı — sadece
-  // zorunlu olmayan (gece dışı) durumlarda oyuncu kendi mikrofonunu
-  // açıp kapatabilsin diye eklendi.
+  // Oyuncunun kendi tercihi: gündüz/gece genel kanalda mikrofonunu kendi
+  // isteğiyle kapatmış mı? Elenince bu tercihin üzerine ZORUNLU susturma biner.
   const [dayMicManuallyOff, setDayMicManuallyOff] = useState(false);
+  // "Sesi kapat" (deafen) — sadece kendi tarafında, başkalarının seni duymasını
+  // etkilemez, sadece SEN başkalarını duymuyorsun.
+  const [deafened, setDeafened] = useState(false);
+  // Şu an konuşmakta olan oyuncuların userId listesi (gündüz + gizli kanal birleşik).
+  const [daySpeaking, setDaySpeaking] = useState(new Set());
+  const [nightSpeaking, setNightSpeaking] = useState(new Set());
 
   const dayClientRef = useRef(null);
   const nightClientRef = useRef(null);
   const localTrackRef = useRef(null);
   const nightJoinedRef = useRef(false);
+  const deafenedRef = useRef(false);
+  const remoteTracksRef = useRef(new Map()); // uid -> uzak ses track'i (deafen aç/kapa için)
 
   const isAssassin = ASSASSIN_ROLES.includes(myRole);
+  const speakingUserIds = useMemo(() => new Set([...daySpeaking, ...nightSpeaking]), [daySpeaking, nightSpeaking]);
 
   // ---------- Gündüz kanalına bağlan (herkes, oda açıldığı anda) ----------
   useEffect(() => {
@@ -66,18 +78,21 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
 
         // ÖNEMLİ: `publish()` sadece KENDİ sesini gönderir — DİĞER oyuncuların
         // seslerini duymak için onların yayınına ayrıca "abone" olup çalmamız
-        // (play) gerekir. Bu olmadan herkesin mikrofonu çalışsa da hiç kimse
-        // birbirini duyamaz (tam da yaşanan "ses gitmiyor" durumu). Bu dinleyiciyi
-        // join()'den ÖNCE kuruyoruz ki kanala girer girmez tetiklenen olayları
-        // kaçırmayalım.
+        // (play) gerekir. Bu dinleyiciyi join()'den ÖNCE kuruyoruz ki kanala
+        // girer girmez tetiklenen olayları kaçırmayalım.
         dayClient.on('user-published', async (remoteUser, mediaType) => {
           if (mediaType !== 'audio') return;
           try {
             const remoteTrack = await dayClient.subscribe(remoteUser, mediaType);
             remoteTrack.play();
+            remoteTracksRef.current.set(remoteUser.uid, remoteTrack);
+            if (deafenedRef.current) remoteTrack.setVolume(0);
           } catch (err) {
             console.error('Genel kanal — uzak ses aboneliği başarısız:', err);
           }
+        });
+        dayClient.on('user-unpublished', (remoteUser) => {
+          remoteTracksRef.current.delete(remoteUser.uid);
         });
 
         const localTrack = await AgoraRTC.createMicrophoneAudioTrack();
@@ -86,7 +101,7 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
           return;
         }
         localTrackRef.current = localTrack;
-        localTrack.setMuted(true); // faz mantığı henüz devrede değil, varsayılan kapalı
+        localTrack.setMuted(true); // faz/ölüm mantığı henüz devrede değil, varsayılan kapalı
 
         // Agora projesi "sertifikalı" (güvenli) modda olduğu için App ID'yi
         // token'sız kullanamıyoruz — backend'den bu kanala özel bir RTC token isteriz.
@@ -95,6 +110,18 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
 
         await dayClient.join(appId, dayChannel, dayToken, userId);
         await dayClient.publish(localTrack);
+
+        // Kim konuşuyor göstergesi: Agora her ~200ms'de bir yayındaki tüm
+        // kullanıcılar (kendimiz dahil) için ses seviyesi bildirir.
+        dayClient.enableAudioVolumeIndicator();
+        dayClient.on('volume-indicator', (volumes) => {
+          const speaking = new Set();
+          volumes.forEach(({ level, uid }) => {
+            if (level > SPEAKING_VOLUME_THRESHOLD) speaking.add(String(uid));
+          });
+          setDaySpeaking(speaking);
+        });
+
         if (!cancelled) setJoined(true);
       } catch (err) {
         console.error('Ses bağlantısı kurulamadı:', err);
@@ -113,32 +140,48 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
       dayClientRef.current = null;
       nightClientRef.current = null;
       nightJoinedRef.current = false;
+      remoteTracksRef.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId, roomCode, userId]);
 
-  // ---------- Faza göre gündüz kanalını otomatik sustur/aç ----------
+  // ---------- Ölünce genel kanalda ZORUNLU sustur ----------
   // ÖNEMLİ: `joined` de bağımlılıklarda olmalı. Aksi halde şu senaryoda mikrofon
   // SÜREKLİ kapalı kalır ve kimse duyamaz: effect1 track'i asenkron oluşturduğu
   // için bu effect ilk render'da track henüz yokken bir kere çalışıp hiçbir şey
-  // yapmadan çıkar; eğer o andan sonra faz hiç değişmezse (örn. Lobi'de kalınırsa)
-  // bir daha da tetiklenmez ve track, effect1'in koyduğu varsayılan "muted: true"
-  // durumunda kilitli kalır. `joined` true olduğunda bu effect'i bir kez daha
-  // çalıştırarak track'i o anki gerçek faza göre doğru şekilde aç/kapat.
+  // yapmadan çıkar; track daha sonra oluşturulunca bir daha tetiklenmezse
+  // effect1'in koyduğu varsayılan "muted: true" durumunda kilitli kalır.
   useEffect(() => {
     const track = localTrackRef.current;
     if (!track) return;
-    const isForcedMute = phase === 'NIGHT'; // zorunlu durum: gece herkes sessiz, oyuncu bunu değiştiremez
-    const shouldBeMuted = isForcedMute || dayMicManuallyOff;
+    const isDead = isAlive === false; // zorunlu durum: elenen oyuncu artık konuşamaz
+    const shouldBeMuted = isDead || dayMicManuallyOff;
     track.setMuted(shouldBeMuted);
     setDayMicOn(!shouldBeMuted);
-  }, [phase, joined, dayMicManuallyOff]);
+  }, [phase, joined, dayMicManuallyOff, isAlive]);
 
-  // Oyuncu kendi mikrofonunu gündüz/lobi sırasında istediği zaman açıp
-  // kapatabilir — sadece gece fazındaki zorunlu susturmayı ezemez.
+  // Oyuncu kendi mikrofonunu istediği zaman açıp kapatabilir — ama elendiyse
+  // (isAlive=false) bu zorunlu susturmayı ezemez.
   function toggleDayMic() {
-    if (phase === 'NIGHT') return; // zorunlu durumda değiştirilemez
+    if (isAlive === false) return;
     setDayMicManuallyOff((prev) => !prev);
+  }
+
+  // "Sesi kapat" (deafen): başkalarının seni duymasını etkilemez, sadece SEN
+  // başkalarını duymazsın — mikrofon kapatmanın yanına eklenen ayrı bir düğme.
+  function toggleDeafen() {
+    setDeafened((prev) => {
+      const next = !prev;
+      deafenedRef.current = next;
+      remoteTracksRef.current.forEach((track) => {
+        try {
+          track.setVolume(next ? 0 : 100);
+        } catch {
+          // sessizce yut — track kapanmış olabilir
+        }
+      });
+      return next;
+    });
   }
 
   // ---------- Suikastçılar için gizli gece kanalına (bir kez) katıl ----------
@@ -158,14 +201,33 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
           try {
             const remoteTrack = await nightClient.subscribe(remoteUser, mediaType);
             remoteTrack.play();
+            remoteTracksRef.current.set(remoteUser.uid, remoteTrack);
+            if (deafenedRef.current) remoteTrack.setVolume(0);
           } catch (err) {
             console.error('Gizli kanal — uzak ses aboneliği başarısız:', err);
           }
         });
+        nightClient.on('user-unpublished', (remoteUser) => {
+          remoteTracksRef.current.delete(remoteUser.uid);
+        });
 
         const nightChannel = `${roomCode}-night-assassins`;
         const { token: nightToken } = await fetchVoiceToken(getToken(), nightChannel);
-        await nightClient.join(appId, nightChannel, nightToken, `${userId}-night`);
+        const nightUid = `${userId}${NIGHT_UID_SUFFIX}`;
+        await nightClient.join(appId, nightChannel, nightToken, nightUid);
+
+        nightClient.enableAudioVolumeIndicator();
+        nightClient.on('volume-indicator', (volumes) => {
+          const speaking = new Set();
+          volumes.forEach(({ level, uid }) => {
+            if (level > SPEAKING_VOLUME_THRESHOLD) {
+              const raw = String(uid);
+              speaking.add(raw.endsWith(NIGHT_UID_SUFFIX) ? raw.slice(0, -NIGHT_UID_SUFFIX.length) : raw);
+            }
+          });
+          setNightSpeaking(speaking);
+        });
+
         if (!cancelled) {
           nightClientRef.current = nightClient;
           nightJoinedRef.current = true;
@@ -185,7 +247,7 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
   async function toggleNightMic() {
     const track = localTrackRef.current;
     const nightClient = nightClientRef.current;
-    if (!track || !nightClient) return;
+    if (!track || !nightClient || isAlive === false) return;
     try {
       if (nightMicOn) {
         await nightClient.unpublish();
@@ -204,10 +266,13 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
     micError,
     dayMicOn,
     nightMicOn,
+    deafened,
+    toggleDeafen,
+    speakingUserIds,
     isAssassin,
     toggleNightMic,
     toggleDayMic,
-    canToggleDayMic: phase !== 'NIGHT',
-    canUseNightChannel: isAssassin && phase === 'NIGHT',
+    canToggleDayMic: isAlive !== false,
+    canUseNightChannel: isAssassin && phase === 'NIGHT' && isAlive !== false,
   };
 }

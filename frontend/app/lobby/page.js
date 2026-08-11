@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getSocket } from '../../lib/socket';
 import { getUser, isLoggedIn } from '../../lib/auth';
-import { ROOM_SIZES, ROOM_SIZE_ROLE_SETS, ROLE_LABELS } from '../../lib/roles';
+import { ROOM_SIZES, ROOM_SIZE_ROLE_SETS, ROLE_LABELS, ROOM_SIZE_NAMES } from '../../lib/roles';
 import NavBar from '../../components/NavBar';
 
 export default function LobbyPage() {
@@ -70,13 +70,14 @@ export default function LobbyPage() {
             <select value={roomSize} onChange={(e) => setRoomSize(Number(e.target.value))}>
               {ROOM_SIZES.map((size) => (
                 <option key={size} value={size}>
-                  {size} kişilik
+                  {size} kişilik — {ROOM_SIZE_NAMES[size]}
                 </option>
               ))}
             </select>
           </div>
           <p className="small">
-            Bu boyutta oynanacak roller: {ROOM_SIZE_ROLE_SETS[roomSize].map((key) => ROLE_LABELS[key]).join(', ')}
+            <strong>{ROOM_SIZE_NAMES[roomSize]}</strong>'nde oynanacak roller:{' '}
+            {ROOM_SIZE_ROLE_SETS[roomSize].map((key) => ROLE_LABELS[key]).join(', ')}
           </p>
           <button onClick={handleCreateRoom} disabled={busy} style={{ width: '100%', marginTop: 8 }}>
             Oda Oluştur

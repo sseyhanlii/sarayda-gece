@@ -4,7 +4,15 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { getSocket } from '../../../lib/socket';
 import { getUser, isLoggedIn } from '../../../lib/auth';
-import { ROLE_LABELS, ROLE_DESCRIPTIONS, TEAM_LABELS, ALL_ROLE_KEYS } from '../../../lib/roles';
+import {
+  ROLE_LABELS,
+  ROLE_DESCRIPTIONS,
+  TEAM_LABELS,
+  ALL_ROLE_KEYS,
+  ROOM_SIZE_ROLE_SETS,
+  ROOM_SIZE_NAMES,
+  getPlayerColor,
+} from '../../../lib/roles';
 import SeatTable from '../../../components/SeatTable';
 import { useVoiceChat } from '../../../lib/voice';
 
@@ -12,9 +20,9 @@ const AGORA_APP_ID = process.env.NEXT_PUBLIC_AGORA_APP_ID || '';
 
 // Backend'deki sabitlerle birebir eşleşir (bkz. backend/game/gameRoom.js)
 const PHASE_DURATIONS = {
-  NIGHT: 45,
-  DAY_DISCUSSION: 90,
-  DAY_VOTE: 30,
+  NIGHT: 15,
+  DAY_DISCUSSION: 40,
+  DAY_VOTE: 15,
   PENDING_EXECUTION: 15,
 };
 
@@ -175,10 +183,12 @@ export default function RoomPage() {
   const me = players.find((p) => p.userId === user?.id);
   const alivePlayers = players.filter((p) => p.isAlive);
   const othersAlive = alivePlayers.filter((p) => p.userId !== user?.id);
+  const roomDisplayName = ROOM_SIZE_NAMES[roomSize] || `${roomSize} Kişilik Oda`;
 
   // Sesli sohbet: Lobi dışında (rol atanmışsa) bağlan. myRole başta null olduğu için
   // suikastçı özel kanalı rol atandıktan sonra devreye girer, gündüz/gece herkes için
-  // ana kanal oyuncu odaya girdiği anda bağlanır.
+  // ana kanal oyuncu odaya girdiği anda bağlanır. Artık gece fazı genel kanalı
+  // otomatik susturmuyor — sadece elenen oyuncular (isAlive=false) zorunlu susuyor.
   const voice = useVoiceChat({
     // Gizlice izleyen yönetici sese katılmaz (görünmez kalması gerekiyor) —
     // boş appId, hook'un içindeki bağlantı efektini tetiklemeden devre dışı bırakır.
@@ -187,10 +197,11 @@ export default function RoomPage() {
     userId: user?.id,
     myRole,
     phase,
+    isAlive: me?.isAlive,
   });
 
-  // Yazılı sohbet: sesli sohbetle aynı gece/gündüz kuralı — gece sadece
-  // suikastçılar birbirine yazabilir, izleyici admin hiç yazamaz.
+  // Yazılı sohbet: gece sadece suikastçılar birbirine yazabilir (sesle aynı gizli
+  // kanal mantığı), izleyici admin hiç yazamaz.
   const canChat = !isSpectating && (phase !== 'NIGHT' || myTeam === 'SUIKASTCILAR');
 
   function sendChat() {
@@ -204,6 +215,10 @@ export default function RoomPage() {
     socketRef.current.emit('startGame');
   }
 
+  function handleToggleReady() {
+    socketRef.current.emit('setReady', { isReady: !me?.isReady });
+  }
+
   function handleKick(targetUserId) {
     if (!confirm('Bu oyuncuyu odadan atmak istediğine emin misin?')) return;
     socketRef.current.emit('kickPlayer', { targetUserId });
@@ -212,6 +227,12 @@ export default function RoomPage() {
   function handleAbort() {
     if (!confirm('Maçı erken bitirip odayı lobiye döndürmek istediğine emin misin?')) return;
     socketRef.current.emit('abortGame');
+  }
+
+  function handleLeaveRoom() {
+    if (phase !== 'LOBBY' && !confirm('Oyun sürerken odadan çıkmak istediğine emin misin?')) return;
+    socketRef.current.emit('leaveRoom');
+    router.push('/lobby');
   }
 
   function submitAbility(abilityKey, targetUserId, mode) {
@@ -227,10 +248,27 @@ export default function RoomPage() {
     socketRef.current.emit('claimPrincess');
   }
 
+  const inGameControls = !isSpectating && (
+    <div className="in-game-controls">
+      <button className="secondary" onClick={() => router.push('/profile')}>
+        👤 Profilimi Düzenle
+      </button>
+      <button className="danger" onClick={handleLeaveRoom}>
+        🚪 {phase === 'LOBBY' ? 'Odadan Çık' : 'Oyundan Çık / Lobiye Dön'}
+      </button>
+    </div>
+  );
+
   if (gameEndedData) {
+    const readyCount = players.filter((p) => p.isReady).length;
     return (
       <div className="page">
-        <h1>Oyun Bitti</h1>
+        <h1>Sarayda Gece</h1>
+        <p className="subtitle">
+          Oda: <strong>{roomCode}</strong> — {roomDisplayName}
+        </p>
+        {inGameControls}
+        <h2 className="center" style={{ marginTop: 0 }}>Oyun Bitti</h2>
         <div className="card center">
           <h2>{TEAM_LABELS[gameEndedData.winningTeam] || gameEndedData.winningTeam} kazandı!</h2>
           <ul className="player-list">
@@ -238,14 +276,27 @@ export default function RoomPage() {
               const player = players.find((pl) => pl.userId === p.userId);
               return (
                 <li key={p.userId} className={!p.isAlive ? 'dead' : ''}>
-                  <span>{player?.username || p.userId}</span>
+                  <span style={{ color: getPlayerColor(p.userId) }}>{player?.username || p.userId}</span>
                   <span className="badge">{ROLE_LABELS[p.role]}</span>
                 </li>
               );
             })}
           </ul>
-          <button onClick={() => router.push('/lobby')} style={{ marginTop: 16 }}>
-            Lobiye Dön
+        </div>
+
+        <div className="card center">
+          <h3 style={{ marginTop: 0 }}>Yeni Tur İçin Hazır mısın?</h3>
+          <p className="small">
+            Oda kapanmıyor — herkes "Hazırım" derse bu odada yeni bir tur otomatik başlar. ({readyCount}/{roomSize}{' '}
+            hazır)
+          </p>
+          <SeatTable players={players} hostUserId={hostUserId} myUserId={user?.id} centerLabel={roomDisplayName} showReady />
+          <button
+            className={me?.isReady ? 'secondary' : ''}
+            onClick={handleToggleReady}
+            style={{ width: '100%', marginTop: 8 }}
+          >
+            {me?.isReady ? '✔ Hazırım (geri al)' : 'Hazırım!'}
           </button>
         </div>
       </div>
@@ -256,10 +307,12 @@ export default function RoomPage() {
     <div className="page">
       <h1>Sarayda Gece</h1>
       <p className="subtitle">
-        Oda: <strong>{roomCode}</strong> ({roomSize} kişilik) — {PHASE_LABELS[phase]}
+        Oda: <strong>{roomCode}</strong> — {roomDisplayName} ({roomSize} kişilik) — {PHASE_LABELS[phase]}
         {dayNumber > 0 ? ` (${phase === 'NIGHT' ? 'Gece' : 'Gün'} ${dayNumber})` : ''}
         {secondsLeft !== null ? ` — ~${secondsLeft} sn` : ''}
       </p>
+
+      {inGameControls}
 
       {isSpectating && (
         <div className="spectate-banner">🕵️ Gizli izleme modu — sadece sen görüyorsun, oyuncular fark etmiyor.</div>
@@ -268,17 +321,55 @@ export default function RoomPage() {
       {errorMessage && <div className="error-banner">{errorMessage}</div>}
       {infoMessage && <div className="error-banner" style={{ background: 'rgba(58,122,77,0.2)', borderColor: 'var(--good)', color: '#bfe6cb' }}>{infoMessage}</div>}
 
-      {!isSpectating && <VoiceStatusBar voice={voice} phase={phase} />}
+      {!isSpectating && <VoiceStatusBar voice={voice} phase={phase} isAlive={me?.isAlive} />}
 
       <SeatTable
         players={players}
         hostUserId={hostUserId}
         myUserId={user?.id}
-        centerLabel={`${roomCode}\n${PHASE_LABELS[phase]}`}
+        centerLabel={`${roomDisplayName}\n${PHASE_LABELS[phase]}`}
         onKick={isHost && phase === 'LOBBY' ? handleKick : null}
+        speakingUserIds={voice.speakingUserIds}
+        showReady={phase === 'LOBBY'}
       />
 
-      {isHost && phase !== 'LOBBY' && !gameEndedData && (
+      {/* Oylama ve idam bekleme kartları, görünürlük şikayeti nedeniyle masanın
+          hemen altına — sayfanın en üst kısımlarına — taşındı. */}
+      {phase === 'DAY_VOTE' && me?.isAlive && !isSpectating && (
+        <div className="card">
+          <h3>İdam Oylaması</h3>
+          <ul className="player-list">
+            {othersAlive.map((p) => (
+              <li key={p.userId}>
+                <span style={{ color: getPlayerColor(p.userId) }}>
+                  {p.username} <span className="small">({voteTally[p.userId] || 0} oy)</span>
+                </span>
+                <button onClick={() => submitVote(p.userId)}>Oy Ver</button>
+              </li>
+            ))}
+          </ul>
+          <button className="secondary" onClick={() => submitVote(null)} style={{ marginTop: 10, width: '100%' }}>
+            Çekimser Kal
+          </button>
+        </div>
+      )}
+
+      {phase === 'PENDING_EXECUTION' && pendingExecutionTarget && (
+        <div className="card center">
+          <h3>İdam Kesinleşiyor...</h3>
+          <p>
+            {players.find((p) => p.userId === pendingExecutionTarget)?.username || pendingExecutionTarget} idam
+            edilmek üzere.
+          </p>
+          {myRole === 'GIZLI_PRENSES' && pendingExecutionTarget === user?.id && (
+            <button className="danger" onClick={claimPrincess}>
+              BEN GUBİŞ'İM! Kartımı Açıyorum
+            </button>
+          )}
+        </div>
+      )}
+
+      {isHost && phase !== 'LOBBY' && (
         <div className="center" style={{ marginBottom: 16 }}>
           <button className="danger" onClick={handleAbort}>
             Maçı Bitir / Odayı Sıfırla
@@ -289,11 +380,22 @@ export default function RoomPage() {
       {phase === 'LOBBY' && (
         <div className="card center">
           <p>
-            {players.length}/{roomSize} oyuncu hazır
+            {players.length}/{roomSize} oyuncu — {players.filter((p) => p.isReady).length} hazır
           </p>
+          <button className={me?.isReady ? 'secondary' : ''} onClick={handleToggleReady} style={{ width: '100%', marginTop: 8 }}>
+            {me?.isReady ? '✔ Hazırım (geri al)' : 'Hazırım!'}
+          </button>
           {isHost && (
-            <button onClick={handleStartGame} disabled={players.length !== roomSize} style={{ width: '100%', marginTop: 8 }}>
-              {players.length === roomSize ? 'Oyunu Başlat' : `${roomSize - players.length} kişi daha bekleniyor`}
+            <button
+              onClick={handleStartGame}
+              disabled={players.length !== roomSize || players.some((p) => !p.isReady)}
+              style={{ width: '100%', marginTop: 8 }}
+            >
+              {players.length !== roomSize
+                ? `${roomSize - players.length} kişi daha bekleniyor`
+                : players.some((p) => !p.isReady)
+                ? 'Herkesin hazır olması bekleniyor'
+                : 'Oyunu Başlat'}
             </button>
           )}
         </div>
@@ -329,7 +431,7 @@ export default function RoomPage() {
                 const player = players.find((p) => p.userId === d.userId);
                 return (
                   <li key={d.userId} className="dead">
-                    <span>{player?.username || d.userId}</span>
+                    <span style={{ color: getPlayerColor(d.userId) }}>{player?.username || d.userId}</span>
                     <span className="badge">{d.cause}</span>
                   </li>
                 );
@@ -342,41 +444,7 @@ export default function RoomPage() {
       {phase === 'DAY_DISCUSSION' && (
         <div className="card">
           <h3>Tartışma Zamanı</h3>
-          <p className="small">Kimin şüpheli olduğunu tartışın — sesli sohbet gündüz fazında herkese açık.</p>
-        </div>
-      )}
-
-      {phase === 'DAY_VOTE' && me?.isAlive && !isSpectating && (
-        <div className="card">
-          <h3>İdam Oylaması</h3>
-          <ul className="player-list">
-            {othersAlive.map((p) => (
-              <li key={p.userId}>
-                <span>
-                  {p.username} <span className="small">({voteTally[p.userId] || 0} oy)</span>
-                </span>
-                <button onClick={() => submitVote(p.userId)}>Oy Ver</button>
-              </li>
-            ))}
-          </ul>
-          <button className="secondary" onClick={() => submitVote(null)} style={{ marginTop: 10, width: '100%' }}>
-            Çekimser Kal
-          </button>
-        </div>
-      )}
-
-      {phase === 'PENDING_EXECUTION' && pendingExecutionTarget && (
-        <div className="card center">
-          <h3>İdam Kesinleşiyor...</h3>
-          <p>
-            {players.find((p) => p.userId === pendingExecutionTarget)?.username || pendingExecutionTarget} idam
-            edilmek üzere.
-          </p>
-          {myRole === 'GIZLI_PRENSES' && pendingExecutionTarget === user?.id && (
-            <button className="danger" onClick={claimPrincess}>
-              BEN GUBİŞ'İM! Kartımı Açıyorum
-            </button>
-          )}
+          <p className="small">Kimin şüpheli olduğunu tartışın — sesli sohbet herkese açık.</p>
         </div>
       )}
 
@@ -410,6 +478,19 @@ export default function RoomPage() {
           isSpectating={isSpectating}
         />
       )}
+
+      {/* Odadaki roller açıklaması — oyun boyunca alt kısımda sabit, hangi
+          rollerin bu oda boyutunda oynanabildiğini herkes görebilsin. */}
+      <div className="card roles-info-card">
+        <h3 style={{ marginTop: 0 }}>{roomDisplayName} — Bu Odadaki Roller</h3>
+        <ul>
+          {(ROOM_SIZE_ROLE_SETS[roomSize] || []).map((key) => (
+            <li key={key}>
+              <strong>{ROLE_LABELS[key]}</strong> — {ROLE_DESCRIPTIONS[key]}
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
@@ -430,7 +511,9 @@ function ChatBox({ messages, myUserId, canChat, phase, input, onInputChange, onS
         {messages.length === 0 && <p className="chat-empty">Henüz mesaj yok.</p>}
         {messages.map((m, i) => (
           <div key={i} className={`chat-line ${m.channel === 'night' ? 'night' : ''}`}>
-            <span className="chat-author">{m.userId === myUserId ? 'Sen' : m.username}:</span>
+            <span className="chat-author" style={{ color: getPlayerColor(m.userId) }}>
+              {m.userId === myUserId ? 'Sen' : m.username}:
+            </span>
             <span>{m.text}</span>
           </div>
         ))}
@@ -596,7 +679,7 @@ function TargetSelect({ players, value, onChange }) {
   );
 }
 
-function VoiceStatusBar({ voice, phase }) {
+function VoiceStatusBar({ voice, phase, isAlive }) {
   if (!process.env.NEXT_PUBLIC_AGORA_APP_ID) {
     return (
       <p className="small center" style={{ marginBottom: 12 }}>
@@ -611,20 +694,25 @@ function VoiceStatusBar({ voice, phase }) {
 
   return (
     <div className="card" style={{ padding: '10px 16px', marginBottom: 16 }}>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
         <span className="small">
           {!voice.joined
             ? '🔌 Sesli sohbete bağlanıyor...'
-            : phase === 'NIGHT'
-            ? '🌙 Gece — genel kanal zorunlu olarak sessiz'
+            : isAlive === false
+            ? '💀 Elendin — artık konuşamazsın, sadece dinleyebilirsin'
             : voice.dayMicOn
-            ? '🔊 Genel kanal açık — mikrofon aktif'
+            ? '🔊 Mikrofon aktif — herkes seni duyabilir'
             : '🔇 Mikrofonunu kendin kapattın'}
         </span>
-        <div className="row" style={{ gap: 8 }}>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           {voice.joined && voice.canToggleDayMic && (
             <button className={voice.dayMicOn ? 'secondary' : 'danger'} onClick={voice.toggleDayMic}>
               {voice.dayMicOn ? '🔇 Mikrofonu Kapat' : '🎤 Mikrofonu Aç'}
+            </button>
+          )}
+          {voice.joined && (
+            <button className={voice.deafened ? 'danger' : 'secondary'} onClick={voice.toggleDeafen}>
+              {voice.deafened ? '🔈 Sesi Aç' : '🔕 Sesi Kapat'}
             </button>
           )}
           {voice.canUseNightChannel && (

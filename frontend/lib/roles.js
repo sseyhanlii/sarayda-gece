@@ -44,6 +44,31 @@ export const ROOM_SIZE_ROLE_SETS = {
 
 export const ROOM_SIZES = [4, 6, 8];
 
+// Oda boyutuna göre özel oda adları ("dört kişilik odaya Fenerlikız odası...")
+export const ROOM_SIZE_NAMES = {
+  4: 'Fenerlikız Odası',
+  6: 'Pizza Odası',
+  8: 'Zeygen Odası',
+};
+
+// Her oyuncuya sabit, birbirinden ayrışan bir renk atamak için palet.
+// Sırayla değil, userId'den türetilen bir hash ile seçiliyor (bkz. getPlayerColor) —
+// böylece bir oyuncu odadan çıkıp girse ya da oyuncu listesi yeniden sıralansa
+// bile hep AYNI rengi alır.
+export const PLAYER_COLORS = [
+  '#ff5fa2', '#3fae7a', '#4c8bff', '#e8a83c',
+  '#9a4cff', '#ff7a3d', '#2fb6c4', '#d1439a',
+];
+
+export function getPlayerColor(userId) {
+  const str = String(userId ?? '');
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  return PLAYER_COLORS[hash % PLAYER_COLORS.length];
+}
+
 // backend/server.js -> AVAILABLE_AVATAR_EMOJIS ile birebir eşleşir (yedek/varsayılan liste;
 // gerçek liste /api/profile/avatars'tan da çekilebilir).
 export const DEFAULT_AVATAR_EMOJIS = ['👑', '🗡️', '🛡️', '🔮', '🕯️', '🦉', '🐺', '🌙', '⚜️', '🎭'];
