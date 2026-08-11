@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { fetchMyProfile, updateMyProfile, fetchAvailableAvatars } from '../../lib/api';
+import { fetchMyProfile, updateMyProfile, fetchAvailableAvatars, uploadAvatarPhoto } from '../../lib/api';
 import { getToken, isLoggedIn, saveSession } from '../../lib/auth';
 import { DEFAULT_AVATAR_EMOJIS } from '../../lib/roles';
 import NavBar from '../../components/NavBar';
@@ -17,6 +17,8 @@ export default function ProfilePage() {
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -58,6 +60,51 @@ export default function ProfilePage() {
     }
   }
 
+  // Seçilen fotoğrafı tarayıcıda küçültüp (max 200x200, JPEG) veritabanına
+  // gönderilecek küçük bir data URI'ye çeviriyoruz — ayrı bir dosya depolama
+  // servisi (Supabase Storage vb.) kurmadan basitçe çalışsın diye.
+  function handlePhotoSelect(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = () => {
+      img.onload = () => {
+        const size = 200;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        const scale = Math.max(size / img.width, size / img.height);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+        setPhotoPreview(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function handleUploadPhoto() {
+    if (!photoPreview) return;
+    setError('');
+    setSuccess('');
+    setUploadingPhoto(true);
+    try {
+      const token = getToken();
+      await uploadAvatarPhoto(token, photoPreview);
+      const fresh = await fetchMyProfile(token);
+      setProfile(fresh);
+      setPhotoPreview(null);
+      setSuccess('Fotoğrafın yüklendi — bir yönetici onaylayınca profilinde görünecek.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }
+
   if (loading) {
     return (
       <div>
@@ -93,20 +140,64 @@ export default function ProfilePage() {
           </div>
         </div>
 
+        {profile?.profile_locked && (
+          <div className="error-banner">
+            🔒 Bir yönetici ad/fotoğraf değiştirmeni kilitledi — profilini düzenleyemezsin.
+          </div>
+        )}
+
+        <div className="card">
+          <h3>Fotoğraf</h3>
+          {photoPreview || profile?.avatar_url ? (
+            <img src={photoPreview || profile.avatar_url} alt="avatar" className="avatar-preview" />
+          ) : (
+            <div className="center" style={{ fontSize: '3rem', marginBottom: 12 }}>{avatarEmoji}</div>
+          )}
+          {profile?.avatar_status && profile.avatar_status !== 'NONE' && (
+            <p className="center">
+              <span className={`avatar-status-pill ${profile.avatar_status}`}>
+                {profile.avatar_status === 'PENDING' && 'Onay bekliyor'}
+                {profile.avatar_status === 'APPROVED' && 'Onaylandı'}
+                {profile.avatar_status === 'REJECTED' && 'Reddedildi — tekrar deneyebilirsin'}
+              </span>
+            </p>
+          )}
+          {!profile?.profile_locked && (
+            <>
+              <input type="file" accept="image/*" onChange={handlePhotoSelect} className="small" />
+              {photoPreview && (
+                <button onClick={handleUploadPhoto} disabled={uploadingPhoto} style={{ width: '100%', marginTop: 10 }}>
+                  {uploadingPhoto ? 'Yükleniyor...' : 'Bu Fotoğrafı Gönder (Onaya Sun)'}
+                </button>
+              )}
+              <p className="small" style={{ marginTop: 8 }}>
+                Yüklediğin fotoğraf bir yönetici onaylayana kadar herkese görünmez — o ana kadar emoji avatarın kullanılır.
+              </p>
+            </>
+          )}
+        </div>
+
         <div className="card">
           <h3>Profili Düzenle</h3>
           <form onSubmit={handleSave}>
             <div className="field">
               <label>Kullanıcı adı</label>
-              <input value={username} onChange={(e) => setUsername(e.target.value)} maxLength={24} required />
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                maxLength={24}
+                required
+                disabled={profile?.profile_locked}
+              />
             </div>
             <div className="field">
-              <label>Avatar</label>
+              <label>Avatar (emoji)</label>
               <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
                 {avatars.map((emoji) => (
                   <button
                     type="button"
                     key={emoji}
+                    disabled={profile?.profile_locked}
                     onClick={() => setAvatarEmoji(emoji)}
                     className={avatarEmoji === emoji ? '' : 'secondary'}
                     style={{ fontSize: '1.4rem', padding: '8px 14px' }}
@@ -120,7 +211,7 @@ export default function ProfilePage() {
               <label>E-posta</label>
               <input value={profile?.email || ''} disabled />
             </div>
-            <button type="submit" disabled={saving} style={{ width: '100%' }}>
+            <button type="submit" disabled={saving || profile?.profile_locked} style={{ width: '100%' }}>
               {saving ? 'Kaydediliyor...' : 'Kaydet'}
             </button>
           </form>

@@ -129,4 +129,30 @@ Not: İdam mekaniği başlangıçtaki taslakta doğrudan oylama biter bitmez ida
 
 ## 8. Sıradaki Adımlar
 
-Production'a almadan önce şu noktalar tamamlanmalı: reconnect/disconnect durumunda oyuncunun oyuna geri dönebilmesi (sayfa yenilendiğinde `joinRoom` tekrar gönderiliyor; lobi fazında artık güvenli — bkz. `addPlayer`'daki idempotent kontrol — ama oyun ortasında sayfa yenilemesi hâlâ "Oyun zaten başladı" hatasına düşer), Agora/Daily.co için sunucu taraflı kanal token'ı üretimi (güvenlik), gece fazı yetenek sırası çakışmalarının (örn. Zehirbaz'ın kilitlediği rolün aynı gece aksiyon göndermeye çalışması) daha kapsamlı test edilmesi, ve `game_events` tablosunun gerçekten her aksiyonda yazılması (taslakta sadece şema var, `server.js`/`gameRoom.js` içine `INSERT` çağrıları eklenmeli).
+Kalan açık noktalar: gece fazı yetenek sırası çakışmalarının (örn. Zehirbaz'ın kilitlediği rolün aynı gece aksiyon göndermeye çalışması, kilit submit sırasına göre davranıyor) daha kapsamlı test edilmesi, ve `game_events` tablosunun gerçekten her aksiyonda yazılması (taslakta sadece şema var, `server.js`/`gameRoom.js` içine `INSERT` çağrıları eklenmeli).
+
+~~reconnect/disconnect durumunda oyuncunun oyuna geri dönebilmesi~~ — DÜZELTİLDİ (bkz. bölüm 9). ~~Agora için sunucu taraflı token üretimi~~ — DÜZELTİLDİ (bkz. bölüm 4, `agora-token`).
+
+## 9. Reconnect Düzeltmesi ("bazı roller çalışmıyor" hatasının gerçek nedeni)
+
+`joinRoom` handler'ı oyun başladıktan sonra (LOBBY dışı fazlarda) HER isteği reddediyordu — bu, YENİ bir oyuncunun katılmasını engellemek için doğruydu ama zaten o odada rolü olan bir oyuncunun sayfa yenileme/bağlantı kopması sonrası YENİDEN katılmasını da engelliyordu. Sonuç: oyuncunun `socketId`'si bayatlıyordu ve sunucudan ona ÖZEL (hedefli `io.to(socketId).emit(...)`) gönderilen her şey (Baş Casus'un sorgu sonucu, Gölge Lider'in "Gubiş mi?" cevabı, `gameStarted` ile rol bilgisi) sonsuza kadar boşa gidiyordu — bu da "bazı roller çalışmıyor" şikayetinin gerçek kaynağıydı (özellikle sonucu sadece özel mesajla gelen Baş Casus'ta en görünür haliyle).
+
+Düzeltme: `joinRoom` artık `room.players` içinde zaten kaydı olan (`userId` eşleşen) bir oyuncuya, oyun ortasında olsa bile yeniden katılmasına izin veriyor (`isExistingPlayer` kontrolü) ve `addPlayer`'ın idempotent güncellemesiyle `socketId` tazeleniyor; ayrıca reconnect eden oyuncuya `gameStarted` (rolü) ve `phaseChanged` (mevcut faz) tekrar gönderiliyor ki ekranı boş kalmasın. Ek olarak `submitNightAction` içine, istemcinin beyan ettiği `abilityKey`'in gerçekten o oyuncunun rolüne ait olduğunu doğrulayan bir sunucu taraflı kontrol eklendi (`REQUIRED_ROLE` haritası) — önceden herhangi bir oyuncu, tarayıcı konsolundan başka bir rolün yeteneğini tetikleyebilirdi.
+
+## 10. Yazılı Sohbet
+
+`GameRoom.sendChatMessage(userId, username, text)` — sesli sohbetle birebir aynı gündüz/gece kuralı: gündüz `chatMessage` event'i tüm odaya (`io.to(roomCode)`) yayınlanır, gece SADECE suikastçı takımına (`team === SUIKASTCILAR`) hedefli olarak gönderilir. İstemci `sendChatMessage` event'iyle mesaj yollar, `frontend/lib/... ` yerine doğrudan `app/room/[roomCode]/page.js` içindeki `ChatBox` bileşeninde toplanır.
+
+## 11. Fotoğraf Yükleme + Admin Onay Akışı
+
+Ayrı bir dosya depolama servisi (Supabase Storage vb.) kurmamak için kullanıcı fotoğrafı tarayıcıda (canvas ile 200x200'e küçültülüp JPEG'e sıkıştırılarak) bir `data:image/jpeg;base64,...` metnine çevrilip doğrudan `users.avatar_pending_url` sütununa yazılır (`POST /api/profile/avatar`, ~250KB üst sınır). Bu haliyle CANLI DEĞİLDİR — sadece admin panelindeki "Fotoğraf Onayı" sekmesinden bir yönetici `POST /api/admin/avatars/:userId/review` ile onaylarsa `avatar_pending_url` → `avatar_url`'e kopyalanır ve oyun içinde (`SeatTable`) görünür olur. Bu basit yaklaşımın bilinçli maliyeti: küçük profil fotoğrafları için veritabanı satırları biraz büyür ama yeni bir bulut servisi/API anahtarı kurmaya gerek kalmaz.
+
+## 12. Yönetici Hiyerarşisi (Owner vs. Admin)
+
+`users.is_owner` (tek hesap, elle SQL ile atanır) sınırsız yetkiye sahiptir: başka hesapları admin yapabilir/admin'likten alabilir (`POST /api/admin/users/:userId/promote`, `ownerMiddleware`), hesap silebilir (`DELETE /api/admin/users/:userId` — geçmiş maç kayıtları bozulmasın diye `game_players`/`games`/`game_events`/`game_votes` içindeki referanslar `ON DELETE SET NULL`'a çevrildi, bkz. `schema_v3_migration.sql`). Normal `is_admin=true` hesaplar (owner'ın atadığı) sadece sınırlı işlemler yapabilir: yasaklama, ad/fotoğraf kilitleme (`profile_locked`), fotoğraf onaylama, odaları sonlandırma, odalara gizlice katılma — promote/delete YAPAMAZLAR (sunucu tarafında `ownerMiddleware` ile zorunlu kılınır, sadece arayüzde gizlenmez).
+
+**Gizli izleme:** `socket.on('adminSpectateRoom')` — `is_admin` DB'den doğrulanır, admin `room.addPlayer` çağrılmadan sadece `socket.join(roomCode)` ile odaya katılır; koltuk almaz, kapasiteye sayılmaz, kimseye görünmez, sadece herkesin gördüğü genel yayınları (oturma düzeni, faz, ölümler, gündüz sohbeti) alır. Admin panelinde "Canlı Odalar" sekmesindeki "Gizlice İzle" butonu `/room/:roomCode?spectate=1` açar.
+
+## 13. Rol Bazlı Liderlik Tablosu
+
+`player_role_stats` tablosu (şemada vardı ama hiç doldurulmuyordu) artık her maç sonunda `persistGameResult` içinde `INSERT ... ON CONFLICT (user_id, role_key) DO UPDATE` ile güncelleniyor; aynı yerde `player_stats.total_wins/total_losses/current_win_streak/best_win_streak` de artık gerçekten hesaplanıyor (önceden sadece `total_games`/`total_score` yazılıyordu). `GET /api/leaderboard/by-role` (herkese açık) her rol için en çok o rolle kazanmış ilk 5 oyuncuyu döner; `frontend/app/leaderboard` sayfasında "Role Göre En Çok Kazananlar" başlığı altında gösterilir.

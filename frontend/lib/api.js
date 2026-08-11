@@ -64,6 +64,20 @@ export function fetchAvailableAvatars() {
   return request('/api/profile/avatars');
 }
 
+// Kullanıcının kendi yüklediği fotoğraf — admin onaylayana kadar canlı olmaz.
+export function uploadAvatarPhoto(token, imageDataUrl) {
+  return request('/api/profile/avatar', {
+    method: 'POST',
+    headers: authHeader(token),
+    body: JSON.stringify({ imageDataUrl }),
+  });
+}
+
+// Herkesin görebildiği, rol bazlı en çok kazananlar sıralaması.
+export function fetchRoleLeaderboard() {
+  return request('/api/leaderboard/by-role');
+}
+
 export function changePassword(token, currentPassword, newPassword) {
   return request('/api/auth/change-password', {
     method: 'POST',
@@ -93,6 +107,42 @@ export function endRoomAsAdmin(token, roomCode) {
   return request(`/api/admin/rooms/${roomCode}/end`, {
     method: 'POST',
     headers: authHeader(token),
+  });
+}
+
+export function setProfileLock(token, userId, locked) {
+  return request(`/api/admin/users/${userId}/profile-lock`, {
+    method: 'POST',
+    headers: authHeader(token),
+    body: JSON.stringify({ locked }),
+  });
+}
+
+// SADECE owner (baş yönetici) çağırabilir — sunucu tarafında da doğrulanır.
+export function promoteToAdmin(token, userId, isAdmin) {
+  return request(`/api/admin/users/${userId}/promote`, {
+    method: 'POST',
+    headers: authHeader(token),
+    body: JSON.stringify({ isAdmin }),
+  });
+}
+
+export function deleteUserAccount(token, userId) {
+  return request(`/api/admin/users/${userId}`, {
+    method: 'DELETE',
+    headers: authHeader(token),
+  });
+}
+
+export function fetchPendingAvatars(token) {
+  return request('/api/admin/avatars/pending', { headers: authHeader(token) });
+}
+
+export function reviewAvatar(token, userId, approve) {
+  return request(`/api/admin/avatars/${userId}/review`, {
+    method: 'POST',
+    headers: authHeader(token),
+    body: JSON.stringify({ approve }),
   });
 }
 

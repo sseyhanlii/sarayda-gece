@@ -27,7 +27,13 @@ export default function SeatTable({ players, hostUserId, myUserId, centerLabel, 
             className={`seat ${isHost ? 'host' : ''} ${isDead ? 'dead' : ''}`}
             style={{ left: `${left}%`, top: `${top}%` }}
           >
-            <div className="seat-avatar">{p.avatarEmoji || '👤'}</div>
+            <div className="seat-avatar">
+              {p.avatarUrl ? (
+                <img src={p.avatarUrl} alt={p.username} className="seat-avatar-img" />
+              ) : (
+                p.avatarEmoji || '👤'
+              )}
+            </div>
             <div className="seat-name">
               {p.username}
               {isMe ? ' (sen)' : ''}

@@ -27,6 +27,63 @@
   box-sizing: border-box;
 }
 
+/* ============================================================
+   Animasyonlar 🎬
+   ============================================================ */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes floatSparkle {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-4px) rotate(12deg); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 8px var(--shadow-pink); }
+  50% { box-shadow: 0 0 20px var(--shadow-pink); }
+}
+
+@keyframes twinkleNight {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.card {
+  animation: fadeInUp 0.35s ease both;
+}
+
+.seat {
+  animation: popIn 0.3s ease both;
+}
+
+.badge {
+  animation: popIn 0.25s ease both;
+}
+
+h1::before, h1::after {
+  display: inline-block;
+  animation: floatSparkle 2.4s ease-in-out infinite;
+}
+
+.phase-banner.night {
+  animation: twinkleNight 3s ease-in-out infinite;
+}
+
+.phase-banner.vote {
+  animation: pulseGlow 1.6s ease-in-out infinite;
+}
+
+.seat.host .seat-avatar {
+  animation: pulseGlow 2.2s ease-in-out infinite;
+}
+
 body {
   margin: 0;
   background: radial-gradient(circle at 15% 0%, #fff0f8 0%, var(--bg) 45%, var(--bg-2) 100%);
@@ -365,6 +422,14 @@ button.danger {
   font-size: 1.6rem;
   margin: 0 auto 6px;
   box-shadow: 0 3px 8px rgba(255, 95, 162, 0.2);
+  overflow: hidden;
+}
+
+.seat-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
 }
 
 .seat.host .seat-avatar {
@@ -395,4 +460,126 @@ button.danger {
   font-size: 0.7rem;
   background: var(--danger);
   color: white;
+}
+
+/* ---------- Yazılı sohbet ---------- */
+.chat-box {
+  display: flex;
+  flex-direction: column;
+  height: 260px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-bottom: 10px;
+}
+
+.chat-line {
+  margin-bottom: 8px;
+  animation: fadeInUp 0.2s ease both;
+  font-size: 0.9rem;
+}
+
+.chat-line .chat-author {
+  font-weight: 700;
+  color: var(--accent);
+  margin-right: 6px;
+}
+
+.chat-line.night .chat-author {
+  color: #6a4c93;
+}
+
+.chat-empty {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  text-align: center;
+  margin-top: 20px;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-input-row input {
+  flex: 1;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 2px solid var(--accent-soft);
+  background: var(--panel-light);
+  color: var(--text);
+  font-family: inherit;
+}
+
+.chat-input-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ---------- Avatar yükleme (profil) ---------- */
+.avatar-preview {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid var(--accent-soft);
+  margin: 0 auto 12px;
+  display: block;
+}
+
+.avatar-status-pill {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.avatar-status-pill.PENDING { background: #ffe1a8; color: #7a4a12; }
+.avatar-status-pill.APPROVED { background: #d4f5e2; color: #1f7a4c; }
+.avatar-status-pill.REJECTED { background: var(--danger-soft); color: #9a2a53; }
+
+/* ---------- İleri seviye yönetici paneli ---------- */
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.admin-table th {
+  text-align: left;
+  padding: 8px 6px;
+  color: var(--text-dim);
+  border-bottom: 2px solid var(--accent-soft);
+}
+
+.admin-table td {
+  padding: 8px 6px;
+  border-bottom: 1px dashed var(--accent-soft);
+  vertical-align: middle;
+}
+
+.admin-table button {
+  padding: 5px 10px;
+  font-size: 0.75rem;
+}
+
+.owner-badge {
+  background: linear-gradient(135deg, var(--gold), #ffd77a);
+  color: #5a3a05;
+}
+
+.spectate-banner {
+  background: linear-gradient(135deg, #6a4c93, #3d2b63);
+  color: #f3e6ff;
+  text-align: center;
+  padding: 10px;
+  border-radius: 14px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  font-size: 0.9rem;
 }

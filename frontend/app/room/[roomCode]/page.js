@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { getSocket } from '../../../lib/socket';
 import { getUser, isLoggedIn } from '../../../lib/auth';
 import { ROLE_LABELS, ROLE_DESCRIPTIONS, TEAM_LABELS, ALL_ROLE_KEYS } from '../../../lib/roles';
@@ -30,8 +30,14 @@ const PHASE_LABELS = {
 export default function RoomPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const roomCode = params.roomCode;
   const user = getUser();
+  // Yönetici/owner, oda dolu ya da oyun başlamış olsa bile gizlice izleyebilir
+  // (bkz. admin panelindeki "Gizlice İzle" düğmesi). Sunucu is_admin'i kendi
+  // tarafında DB'den doğruluyor; buradaki user?.isAdmin sadece UI'da ilgili
+  // giriş noktasını (link) göstermek/gizlemek için, gerçek yetki kontrolü değil.
+  const isSpectating = searchParams.get('spectate') === '1' && Boolean(user?.isAdmin);
 
   const [players, setPlayers] = useState([]);
   const [roomSize, setRoomSize] = useState(8);
@@ -51,6 +57,8 @@ export default function RoomPage() {
   const [gameEndedData, setGameEndedData] = useState(null);
   const [actionSubmitted, setActionSubmitted] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
 
   const socketRef = useRef(null);
 
@@ -62,7 +70,14 @@ export default function RoomPage() {
     const socket = getSocket();
     socketRef.current = socket;
 
-    socket.emit('joinRoom', { roomCode }); // odaya zaten katılmışsa sunucu bunu görmezden gelir/hata döner, sorun değil
+    if (isSpectating) {
+      // Gizli izleme: koltuk almadan sadece herkesin gördüğü yayınları dinle.
+      socket.emit('adminSpectateRoom', { roomCode });
+    } else {
+      socket.emit('joinRoom', { roomCode }); // odaya zaten katılmışsa sunucu bunu görmezden gelir/hata döner, sorun değil
+    }
+
+    const onChatMessage = (msg) => setChatMessages((prev) => [...prev.slice(-99), msg]);
 
     const onRoomUpdate = (state) => {
       setPlayers(state.players);
@@ -118,6 +133,7 @@ export default function RoomPage() {
     socket.on('kickedFromRoom', onKicked);
     socket.on('roomClosedByAdmin', onRoomClosedByAdmin);
     socket.on('adminEndedGame', onAdminEndedGame);
+    socket.on('chatMessage', onChatMessage);
 
     return () => {
       socket.off('roomUpdate', onRoomUpdate);
@@ -134,9 +150,11 @@ export default function RoomPage() {
       socket.off('kickedFromRoom', onKicked);
       socket.off('roomClosedByAdmin', onRoomClosedByAdmin);
       socket.off('adminEndedGame', onAdminEndedGame);
+      socket.off('chatMessage', onChatMessage);
+      if (isSpectating) socket.emit('adminLeaveSpectate');
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomCode]);
+  }, [roomCode, isSpectating]);
 
   // Faz değişince yaklaşık bir geri sayım başlat (sunucuyla tam senkron değil,
   // sadece oyunculara "ne kadar zaman kaldı" hissi vermek için).
@@ -162,12 +180,25 @@ export default function RoomPage() {
   // suikastçı özel kanalı rol atandıktan sonra devreye girer, gündüz/gece herkes için
   // ana kanal oyuncu odaya girdiği anda bağlanır.
   const voice = useVoiceChat({
-    appId: AGORA_APP_ID,
+    // Gizlice izleyen yönetici sese katılmaz (görünmez kalması gerekiyor) —
+    // boş appId, hook'un içindeki bağlantı efektini tetiklemeden devre dışı bırakır.
+    appId: isSpectating ? '' : AGORA_APP_ID,
     roomCode,
     userId: user?.id,
     myRole,
     phase,
   });
+
+  // Yazılı sohbet: sesli sohbetle aynı gece/gündüz kuralı — gece sadece
+  // suikastçılar birbirine yazabilir, izleyici admin hiç yazamaz.
+  const canChat = !isSpectating && (phase !== 'NIGHT' || myTeam === 'SUIKASTCILAR');
+
+  function sendChat() {
+    const text = chatInput.trim();
+    if (!text) return;
+    socketRef.current.emit('sendChatMessage', { text });
+    setChatInput('');
+  }
 
   function handleStartGame() {
     socketRef.current.emit('startGame');
@@ -230,10 +261,14 @@ export default function RoomPage() {
         {secondsLeft !== null ? ` — ~${secondsLeft} sn` : ''}
       </p>
 
+      {isSpectating && (
+        <div className="spectate-banner">🕵️ Gizli izleme modu — sadece sen görüyorsun, oyuncular fark etmiyor.</div>
+      )}
+
       {errorMessage && <div className="error-banner">{errorMessage}</div>}
       {infoMessage && <div className="error-banner" style={{ background: 'rgba(58,122,77,0.2)', borderColor: 'var(--good)', color: '#bfe6cb' }}>{infoMessage}</div>}
 
-      <VoiceStatusBar voice={voice} phase={phase} />
+      {!isSpectating && <VoiceStatusBar voice={voice} phase={phase} />}
 
       <SeatTable
         players={players}
@@ -272,7 +307,7 @@ export default function RoomPage() {
         </div>
       )}
 
-      {phase === 'NIGHT' && (
+      {phase === 'NIGHT' && !isSpectating && (
         <NightActionPanel
           myRole={myRole}
           othersAlive={othersAlive}
@@ -311,7 +346,7 @@ export default function RoomPage() {
         </div>
       )}
 
-      {phase === 'DAY_VOTE' && me?.isAlive && (
+      {phase === 'DAY_VOTE' && me?.isAlive && !isSpectating && (
         <div className="card">
           <h3>İdam Oylaması</h3>
           <ul className="player-list">
@@ -361,6 +396,62 @@ export default function RoomPage() {
             <span className="badge">{ROLE_LABELS[lastExecution.roleReveal] || '?'}</span>
           </p>
         </div>
+      )}
+
+      {phase !== 'LOBBY' && (
+        <ChatBox
+          messages={chatMessages}
+          myUserId={user?.id}
+          canChat={canChat}
+          phase={phase}
+          input={chatInput}
+          onInputChange={setChatInput}
+          onSend={sendChat}
+          isSpectating={isSpectating}
+        />
+      )}
+    </div>
+  );
+}
+
+function ChatBox({ messages, myUserId, canChat, phase, input, onInputChange, onSend, isSpectating }) {
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [messages]);
+
+  return (
+    <div className="card chat-box">
+      <h3 style={{ marginTop: 0, marginBottom: 8 }}>
+        {phase === 'NIGHT' ? '🌙 Gizli Kanal Yazışması' : '💬 Genel Sohbet'}
+      </h3>
+      <div className="chat-messages" ref={listRef}>
+        {messages.length === 0 && <p className="chat-empty">Henüz mesaj yok.</p>}
+        {messages.map((m, i) => (
+          <div key={i} className={`chat-line ${m.channel === 'night' ? 'night' : ''}`}>
+            <span className="chat-author">{m.userId === myUserId ? 'Sen' : m.username}:</span>
+            <span>{m.text}</span>
+          </div>
+        ))}
+      </div>
+      {isSpectating ? (
+        <p className="small">Gizlice izlerken sohbete yazamazsın.</p>
+      ) : canChat ? (
+        <div className="chat-input-row">
+          <input
+            value={input}
+            onChange={(e) => onInputChange(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && onSend()}
+            placeholder="Bir mesaj yaz..."
+            maxLength={500}
+          />
+          <button onClick={onSend} disabled={!input.trim()}>
+            Gönder
+          </button>
+        </div>
+      ) : (
+        <p className="small">🌙 Gece — sadece suikastçılar gizli kanalda yazabilir.</p>
       )}
     </div>
   );
