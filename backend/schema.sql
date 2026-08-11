@@ -10,6 +10,9 @@ CREATE TABLE users (
     email           VARCHAR(255) UNIQUE NOT NULL,
     password_hash   TEXT NOT NULL,          -- bcrypt hash
     avatar_url      TEXT,
+    avatar_emoji    VARCHAR(8) DEFAULT '👤', -- basit emoji avatar (dosya yükleme altyapısı gerektirmez)
+    is_admin        BOOLEAN NOT NULL DEFAULT FALSE, -- site geneli admin paneline erişim
+    is_banned       BOOLEAN NOT NULL DEFAULT FALSE, -- true ise giriş engellenir
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at   TIMESTAMPTZ
 );

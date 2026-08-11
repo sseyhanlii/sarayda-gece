@@ -5,7 +5,7 @@
 // maç bittiğinde sonuç Postgres'e yazılır (bkz. persistGameResult).
 // ============================================================
 
-const { ROLE, TEAM, assignRoles } = require('./roles');
+const { ROLE, TEAM, assignRoles, SUPPORTED_ROOM_SIZES } = require('./roles');
 
 const PHASE = {
   LOBBY: 'LOBBY',
@@ -22,9 +22,14 @@ const VOTE_DURATION_MS = 30_000;
 const PENDING_EXECUTION_DURATION_MS = 15_000; // Gizli Prenses'in kartını açması için tanınan süre
 
 class GameRoom {
-  constructor(roomCode, io) {
+  constructor(roomCode, io, roomSize = 8, onGameEnded = null) {
+    if (!SUPPORTED_ROOM_SIZES.includes(roomSize)) {
+      throw new Error(`Desteklenmeyen oda boyutu: ${roomSize}. Desteklenenler: ${SUPPORTED_ROOM_SIZES.join(', ')}`);
+    }
     this.roomCode = roomCode;
     this.io = io;                 // socket.io namespace/instance referansı
+    this.roomSize = roomSize;     // 4, 6 veya 8 — bu odanın kaç oyuncuyla oynanacağı
+    this.onGameEnded = onGameEnded; // maç bitince çağrılır (bkz. server.js -> persistGameResult)
     this.players = [];            // { userId, username, socketId, role, team, isAlive, ... }
     this.hostUserId = null;
     this.phase = PHASE.LOBBY;
@@ -43,18 +48,19 @@ class GameRoom {
   }
 
   // ---------- LOBİ ----------
-  addPlayer(userId, username, socketId) {
+  addPlayer(userId, username, socketId, avatarEmoji = '👤') {
     // Aynı kullanıcı zaten odadaysa (örn. lobi sayfasından oda sayfasına geçişte
     // ikinci bir 'joinRoom' tetiklenmesi ya da sayfa yenileme) yinelenen koltuk
     // açmak yerine sadece socket bağlantısını güncelle.
     const existing = this.players.find((p) => p.userId === userId);
     if (existing) {
       existing.socketId = socketId;
+      existing.avatarEmoji = avatarEmoji;
       return this.getPublicState();
     }
-    if (this.players.length >= 8) throw new Error('Oda dolu.');
+    if (this.players.length >= this.roomSize) throw new Error('Oda dolu.');
     if (!this.hostUserId) this.hostUserId = userId;
-    this.players.push({ userId, username, socketId, role: null, team: null, isAlive: true });
+    this.players.push({ userId, username, socketId, avatarEmoji, role: null, team: null, isAlive: true });
     return this.getPublicState();
   }
 
@@ -65,9 +71,47 @@ class GameRoom {
     }
   }
 
+  // Host, lobi fazındayken bir oyuncuyu odadan atabilir (kendini atamaz).
+  kickPlayer(requesterUserId, targetUserId) {
+    if (requesterUserId !== this.hostUserId) return { ok: false, reason: 'Sadece oda kurucusu oyuncu atabilir.' };
+    if (this.phase !== PHASE.LOBBY) return { ok: false, reason: 'Oyun başladıktan sonra oyuncu atılamaz.' };
+    if (requesterUserId === targetUserId) return { ok: false, reason: 'Kendini atamazsın.' };
+    const target = this.players.find((p) => p.userId === targetUserId);
+    if (!target) return { ok: false, reason: 'Oyuncu bulunamadı.' };
+    this.removePlayer(targetUserId);
+    return { ok: true, kickedSocketId: target.socketId };
+  }
+
+  // Host, aktif bir maçı erken bitirip odayı lobiye döndürebilir (oyuncular kalır, roller sıfırlanır).
+  abortGame(requesterUserId) {
+    if (requesterUserId !== this.hostUserId) return { ok: false, reason: 'Sadece oda kurucusu oyunu sıfırlayabilir.' };
+    if (this.phase === PHASE.LOBBY) return { ok: false, reason: 'Oyun zaten başlamadı.' };
+    clearTimeout(this.timer);
+    this.phase = PHASE.LOBBY;
+    this.dayNumber = 0;
+    this.nightActions = {};
+    this.votes = {};
+    this.princessRevealUsed = false;
+    this.pendingExecutionTargetUserId = null;
+    this.shadowLeaderQueryUsed = false;
+    this.poisonerUsed = false;
+    this.doctorAntidoteUsed = false;
+    this.doctorPoisonUsed = false;
+    this.decoyAssassinatedLastNight = false;
+    this.winner = null;
+    this.players.forEach((p) => {
+      p.role = null;
+      p.team = null;
+      p.isAlive = true;
+    });
+    return { ok: true };
+  }
+
   startGame() {
-    if (this.players.length !== 8) throw new Error('Oyun için 8 oyuncu gerekli.');
-    this.players = assignRoles(this.players);
+    if (this.players.length !== this.roomSize) {
+      throw new Error(`Oyun için ${this.roomSize} oyuncu gerekli.`);
+    }
+    this.players = assignRoles(this.players, this.roomSize);
     this.dayNumber = 1;
     // Her oyuncuya SADECE kendi rolünü gizlice gönder
     this.players.forEach((p) => {
@@ -331,7 +375,9 @@ class GameRoom {
       winningTeam: winnerTeam,
       roleReveal: this.players.map((p) => ({ userId: p.userId, role: p.role, isAlive: p.isAlive })),
     });
-    // persistGameResult(this) -> Postgres'e yaz (bkz. scoring.js + server.js)
+    if (typeof this.onGameEnded === 'function') {
+      this.onGameEnded(this);
+    }
   }
 
   // ---------- YARDIMCILAR ----------
@@ -350,13 +396,27 @@ class GameRoom {
   getPublicState() {
     return {
       roomCode: this.roomCode,
+      roomSize: this.roomSize,
       hostUserId: this.hostUserId,
       phase: this.phase,
       players: this.players.map((p) => ({
         userId: p.userId,
         username: p.username,
+        avatarEmoji: p.avatarEmoji,
         isAlive: p.isAlive,
       })),
+    };
+  }
+
+  // Admin panelinin canlı odaları listelemesi için (bkz. server.js /api/admin/rooms)
+  getAdminSummary() {
+    return {
+      roomCode: this.roomCode,
+      roomSize: this.roomSize,
+      phase: this.phase,
+      dayNumber: this.dayNumber,
+      playerCount: this.players.length,
+      hostUserId: this.hostUserId,
     };
   }
 }

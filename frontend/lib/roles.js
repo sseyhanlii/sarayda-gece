@@ -33,3 +33,17 @@ export const TEAM_LABELS = {
 };
 
 export const ALL_ROLE_KEYS = Object.keys(ROLE_LABELS);
+
+// backend/game/roles.js -> ROLE_SETS_BY_SIZE ile birebir eşleşir.
+// Lobide oda boyutu seçilirken hangi rollerin oyunda olacağını göstermek için kullanılır.
+export const ROOM_SIZE_ROLE_SETS = {
+  4: ['GIZLI_PRENSES', 'MUHAFIZ', 'BAS_CASUS', 'GOLGE_LIDER'],
+  6: ['GIZLI_PRENSES', 'SAHTE_PRENSES', 'MUHAFIZ', 'BAS_CASUS', 'GOLGE_LIDER', 'ZEHIRBAZ'],
+  8: ALL_ROLE_KEYS,
+};
+
+export const ROOM_SIZES = [4, 6, 8];
+
+// backend/server.js -> AVAILABLE_AVATAR_EMOJIS ile birebir eşleşir (yedek/varsayılan liste;
+// gerçek liste /api/profile/avatars'tan da çekilebilir).
+export const DEFAULT_AVATAR_EMOJIS = ['👑', '🗡️', '🛡️', '🔮', '🕯️', '🦉', '🐺', '🌙', '⚜️', '🎭'];

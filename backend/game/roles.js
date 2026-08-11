@@ -83,13 +83,35 @@ const ROLE_DEFINITIONS = {
   },
 };
 
-// Rastgele rol dağıtımı (8 sabit rol, Fisher-Yates shuffle)
-function assignRoles(players) {
-  if (players.length !== 8) {
-    throw new Error('Bu rol seti sadece 8 oyuncu için tasarlandı.');
+// Oda boyutuna göre rol seti. Denge mantığı: suikastçı oranı her boyutta
+// kabaca 1/3'ün altında tutulur, oyun küçüldükçe en "ek/lüks" roller
+// (Hekim, Taht Taliplisi) önce çıkarılır çünkü çekirdek mekanik (Prenses,
+// Muhafız, Casus, Gölge Lider) onlarsız da tam çalışır.
+const ROLE_SETS_BY_SIZE = {
+  4: [ROLE.GIZLI_PRENSES, ROLE.MUHAFIZ, ROLE.BAS_CASUS, ROLE.GOLGE_LIDER],
+  6: [
+    ROLE.GIZLI_PRENSES,
+    ROLE.SAHTE_PRENSES,
+    ROLE.MUHAFIZ,
+    ROLE.BAS_CASUS,
+    ROLE.GOLGE_LIDER,
+    ROLE.ZEHIRBAZ,
+  ],
+  8: Object.keys(ROLE_DEFINITIONS),
+};
+
+const SUPPORTED_ROOM_SIZES = Object.keys(ROLE_SETS_BY_SIZE).map(Number);
+
+// Rastgele rol dağıtımı (Fisher-Yates shuffle). roomSize: 4, 6 veya 8.
+function assignRoles(players, roomSize = 8) {
+  const roleSet = ROLE_SETS_BY_SIZE[roomSize];
+  if (!roleSet) {
+    throw new Error(`Desteklenmeyen oda boyutu: ${roomSize}. Desteklenenler: ${SUPPORTED_ROOM_SIZES.join(', ')}`);
   }
-  const roleKeys = Object.keys(ROLE_DEFINITIONS);
-  const shuffled = [...roleKeys];
+  if (players.length !== roomSize) {
+    throw new Error(`Bu rol seti ${roomSize} oyuncu için tasarlandı.`);
+  }
+  const shuffled = [...roleSet];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -102,4 +124,4 @@ function assignRoles(players) {
   }));
 }
 
-module.exports = { TEAM, ROLE, ROLE_DEFINITIONS, assignRoles };
+module.exports = { TEAM, ROLE, ROLE_DEFINITIONS, ROLE_SETS_BY_SIZE, SUPPORTED_ROOM_SIZES, assignRoles };

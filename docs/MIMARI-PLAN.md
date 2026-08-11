@@ -1,6 +1,16 @@
 # "Sarayda Gece: Gizli Prenses" — Mimari Plan
 
-Bu doküman, 8 kişilik tarayıcı üzerinden oynanan gizli rol / sosyal çıkarım oyununun veritabanı şemasını, Socket.io olay mimarisini, önerilen teknoloji yığınını ve puanlama algoritmasını açıklar. Çalışan kod taslakları `backend/` klasöründe yer alır: `schema.sql`, `server.js`, `game/gameRoom.js`, `game/roles.js`, `game/scoring.js`, `voice-chat-example.js`.
+Bu doküman, tarayıcı üzerinden oynanan gizli rol / sosyal çıkarım oyununun veritabanı şemasını, Socket.io olay mimarisini, önerilen teknoloji yığınını ve puanlama algoritmasını açıklar. Çalışan kod taslakları `backend/` klasöründe yer alır: `schema.sql`, `schema_v2_migration.sql`, `server.js`, `game/gameRoom.js`, `game/roles.js`, `game/scoring.js`, `voice-chat-example.js`; frontend `frontend/` klasöründe (bkz. Bölüm 7).
+
+## 0. Oda Boyutları ve Rol Dengesi
+
+Oyun artık 4, 6 veya 8 kişilik odalarda oynanabiliyor (`backend/game/roles.js` -> `ROLE_SETS_BY_SIZE`). Denge mantığı: her boyutta suikastçı oranı kabaca 1/3'ün altında tutulur; oyun küçüldükçe önce "ek/lüks" roller (Hekim, Taht Taliplisi) çıkarılır çünkü çekirdek mekanik (Gizli Prenses, Muhafız, Baş Casus, Gölge Lider) onlarsız da tam çalışır.
+
+- **4 kişi:** Gizli Prenses, Muhafız, Baş Casus (3 iyi) + Gölge Lider (1 suikastçı)
+- **6 kişi:** Gizli Prenses, Sahte Prenses, Muhafız, Baş Casus (4 iyi) + Gölge Lider, Zehirbaz (2 suikastçı)
+- **8 kişi:** orijinal 8 rolün tamamı (5 iyi + 2 suikastçı + 1 tarafsız)
+
+Oda kurucusu, oda oluştururken boyutu seçer (`createRoom` event'ine `{ roomSize }` parametresi eklendi); `GameRoom` bu boyutu oyun boyunca `roomSize` alanında tutar ve rol dağıtımı, lobi doluluk kontrolü buna göre çalışır.
 
 ## 1. Veritabanı Şeması
 
@@ -99,9 +109,19 @@ Son olarak her rolün toplam puanı, o rolün ortalama risk/sorumluluk seviyesin
 
 Örnek hesap: İyiler kazandı, Gizli Prenses hayatta kaldı → (2 katılım + 20 takım galibiyeti + 3 hayatta kalma + 10 prenses bonusu) × 1.3 = 35 × 1.3 ≈ **46 puan**. Taht Taliplisi tek başına kazandı ve hayatta kaldı → (2 + 50 + 3) × 1.0 = **55 puan**.
 
+## 6.5 Host Kontrolleri ve Site Geneli Admin Paneli
+
+**Oda içi host kontrolleri** (`gameRoom.js` -> `kickPlayer`, `abortGame`; socket event'leri `kickPlayer`, `abortGame`): oda kurucusu lobi fazındayken bir oyuncuyu atabilir; aktif bir maçı da (herhangi bir fazda) erken bitirip odayı lobiye döndürebilir — oyuncular korunur, roller/faz sıfırlanır, yeniden "Oyunu Başlat" ile devam edilebilir.
+
+**Site geneli admin paneli** sadece `users.is_admin = true` olan hesaplara açık (JWT içine "isAdmin" claim'i gömmek yerine her istekte DB'den taze okunuyor — `adminMiddleware`, bkz. `server.js` — böylece bir hesabın yetkisi geri alındığında eski token'lar hâlâ geçerli olsa da erişim anında kesiliyor). Uç noktalar: `GET /api/admin/users` (tüm kullanıcılar + istatistikleri), `POST /api/admin/users/:userId/ban` (yasakla/yasağı kaldır — yasaklı hesap login'de reddedilir), `GET /api/admin/rooms` (RAM'deki aktif odaların anlık özeti), `POST /api/admin/rooms/:roomCode/end` (bir odayı zorla sonlandırır). İlk admin hesabını oluşturmak için `schema_v2_migration.sql`'in altındaki `UPDATE users SET is_admin = TRUE WHERE email = '...'` satırını kendi e-postanla Supabase SQL Editor'de çalıştırman gerekiyor — arayüzden admin yapma özelliği bilinçli olarak yok, ilk admin elle atanır.
+
+## 6.6 Profil ve Hesap Ayarları
+
+`GET /api/profile/me` ve `PATCH /api/profile/me` ile kullanıcı adı ve avatar (10 emoji arasından seçilen basit bir avatar — dosya yükleme/depolama altyapısı gerektirmeden) düzenlenebiliyor. `POST /api/auth/change-password` ile şifre değiştirme (mevcut şifre doğrulanarak) eklendi. Bu üçü de `frontend/app/profile` ve `frontend/app/settings` sayfalarında kullanılıyor.
+
 ## 7. Frontend (Next.js)
 
-`frontend/` klasöründe çalışan bir Next.js (App Router) istemcisi var: kayıt/giriş sayfaları (`app/login`, `app/register`), lobi (`app/lobby`) ve oyunun tamamının oynandığı oda ekranı (`app/room/[roomCode]`). Oda ekranı, backend'in yayınladığı tüm Socket.io event'lerini dinler ve role göre gece yeteneği formunu (Muhafız/Hekim/Casus/Gölge Lider/Zehirbaz) dinamik olarak gösterir. `lib/socket.js` tek bir Socket.io bağlantısını (singleton) yönetir, `lib/auth.js` JWT'yi tarayıcıda saklar. Vercel'e deploy ederken `NEXT_PUBLIC_BACKEND_URL` ortam değişkenini Render'daki backend URL'ine ayarlamak gerekiyor.
+`frontend/` klasöründe çalışan bir Next.js (App Router) istemcisi var: kayıt/giriş sayfaları (`app/login`, `app/register`), lobi (`app/lobby` — oda boyutu seçimi dahil), oyunun oynandığı oda ekranı (`app/room/[roomCode]`), profil (`app/profile`), hesap ayarları (`app/settings`), liderlik tablosu (`app/leaderboard`) ve yönetici paneli (`app/admin`, sadece `user.isAdmin` true olan hesaplara görünür — asıl yetki kontrolü sunucuda). Oda ekranı, backend'in yayınladığı tüm Socket.io event'lerini dinler, role göre gece yeteneği formunu (Muhafız/Hekim/Casus/Gölge Lider/Zehirbaz) dinamik gösterir ve `components/SeatTable.js` ile tüm oyuncuları yuvarlak bir masa etrafında "sandalyelerde" (avatar + isim, ölüler soluk/çizili) görselleştirir — bu bileşen oyuncu sayısına göre otomatik açı hesapladığı için 4/6/8 kişilik odaların hepsinde çalışır. `lib/socket.js` tek bir Socket.io bağlantısını (singleton) yönetir, `lib/auth.js` JWT'yi tarayıcıda saklar. Vercel'e deploy ederken `NEXT_PUBLIC_BACKEND_URL` ortam değişkenini Render'daki backend URL'ine ayarlamak gerekiyor.
 
 Not: İdam mekaniği başlangıçtaki taslakta doğrudan oylama biter bitmez idam ediyordu; Gizli Prenses'in kartını açıp iptal edebilmesi için bir ara faz (`PENDING_EXECUTION`, ~15 sn) eklendi — oylama bitince önce bu faza geçilir, hedef Prenses ise ve süresi içinde `claimPrincess` gönderirse idam iptal olur, göndermezse süre sonunda otomatik idam gerçekleşir.
 

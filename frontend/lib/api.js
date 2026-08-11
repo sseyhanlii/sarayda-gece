@@ -42,3 +42,56 @@ export function fetchMyStats(token) {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
+
+function authHeader(token) {
+  return { Authorization: `Bearer ${token}` };
+}
+
+// ---------- Profil ----------
+export function fetchMyProfile(token) {
+  return request('/api/profile/me', { headers: authHeader(token) });
+}
+
+export function updateMyProfile(token, { username, avatarEmoji }) {
+  return request('/api/profile/me', {
+    method: 'PATCH',
+    headers: authHeader(token),
+    body: JSON.stringify({ username, avatarEmoji }),
+  });
+}
+
+export function fetchAvailableAvatars() {
+  return request('/api/profile/avatars');
+}
+
+export function changePassword(token, currentPassword, newPassword) {
+  return request('/api/auth/change-password', {
+    method: 'POST',
+    headers: authHeader(token),
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
+// ---------- Admin ----------
+export function fetchAdminUsers(token) {
+  return request('/api/admin/users', { headers: authHeader(token) });
+}
+
+export function setUserBanned(token, userId, banned) {
+  return request(`/api/admin/users/${userId}/ban`, {
+    method: 'POST',
+    headers: authHeader(token),
+    body: JSON.stringify({ banned }),
+  });
+}
+
+export function fetchAdminRooms(token) {
+  return request('/api/admin/rooms', { headers: authHeader(token) });
+}
+
+export function endRoomAsAdmin(token, roomCode) {
+  return request(`/api/admin/rooms/${roomCode}/end`, {
+    method: 'POST',
+    headers: authHeader(token),
+  });
+}

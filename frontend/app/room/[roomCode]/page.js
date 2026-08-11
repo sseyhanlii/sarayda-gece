@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '../../../lib/socket';
 import { getUser, isLoggedIn } from '../../../lib/auth';
 import { ROLE_LABELS, ROLE_DESCRIPTIONS, TEAM_LABELS, ALL_ROLE_KEYS } from '../../../lib/roles';
+import SeatTable from '../../../components/SeatTable';
 
 // Backend'deki sabitlerle birebir eşleşir (bkz. backend/game/gameRoom.js)
 const PHASE_DURATIONS = {
@@ -23,13 +24,6 @@ const PHASE_LABELS = {
   RESULTS: 'Sonuçlar',
 };
 
-// Gece aksiyonu OLAN roller ve varsayılan yetenek anahtarları
-const NIGHT_ABILITY_ROLES = {
-  MUHAFIZ: 'GUARD_PROTECT',
-  BAS_CASUS: 'SPY_INVESTIGATE',
-  GOLGE_LIDER: 'ASSASSIN_CHOOSE_TARGET',
-};
-
 export default function RoomPage() {
   const params = useParams();
   const router = useRouter();
@@ -37,12 +31,14 @@ export default function RoomPage() {
   const user = getUser();
 
   const [players, setPlayers] = useState([]);
+  const [roomSize, setRoomSize] = useState(8);
   const [hostUserId, setHostUserId] = useState(null);
   const [phase, setPhase] = useState('LOBBY');
   const [dayNumber, setDayNumber] = useState(0);
   const [myRole, setMyRole] = useState(null);
   const [myTeam, setMyTeam] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [infoMessage, setInfoMessage] = useState('');
   const [abilityResult, setAbilityResult] = useState(null);
   const [nightDeaths, setNightDeaths] = useState(null);
   const [voteTally, setVoteTally] = useState({});
@@ -69,10 +65,15 @@ export default function RoomPage() {
       setPlayers(state.players);
       setHostUserId(state.hostUserId);
       setPhase(state.phase);
+      if (state.roomSize) setRoomSize(state.roomSize);
     };
     const onGameStarted = ({ yourRole, team }) => {
       setMyRole(yourRole);
       setMyTeam(team);
+      setGameEndedData(null);
+      setNightDeaths(null);
+      setLastExecution(null);
+      setPrincessRevealedUserId(null);
     };
     const onPhaseChanged = ({ phase: newPhase, dayNumber: newDay }) => {
       setPhase(newPhase);
@@ -90,6 +91,15 @@ export default function RoomPage() {
     const onExecutionResult = (payload) => setLastExecution(payload);
     const onGameEnded = (payload) => setGameEndedData(payload);
     const onError = (payload) => setErrorMessage(payload.message);
+    const onKicked = () => {
+      alert('Oda kurucusu seni odadan çıkardı.');
+      router.push('/lobby');
+    };
+    const onRoomClosedByAdmin = () => {
+      alert('Bu oda bir yönetici tarafından kapatıldı.');
+      router.push('/lobby');
+    };
+    const onAdminEndedGame = () => setInfoMessage('Bu maç bir yönetici tarafından sonlandırıldı, oda lobiye döndü.');
 
     socket.on('roomUpdate', onRoomUpdate);
     socket.on('gameStarted', onGameStarted);
@@ -102,6 +112,9 @@ export default function RoomPage() {
     socket.on('executionResult', onExecutionResult);
     socket.on('gameEnded', onGameEnded);
     socket.on('error', onError);
+    socket.on('kickedFromRoom', onKicked);
+    socket.on('roomClosedByAdmin', onRoomClosedByAdmin);
+    socket.on('adminEndedGame', onAdminEndedGame);
 
     return () => {
       socket.off('roomUpdate', onRoomUpdate);
@@ -115,6 +128,9 @@ export default function RoomPage() {
       socket.off('executionResult', onExecutionResult);
       socket.off('gameEnded', onGameEnded);
       socket.off('error', onError);
+      socket.off('kickedFromRoom', onKicked);
+      socket.off('roomClosedByAdmin', onRoomClosedByAdmin);
+      socket.off('adminEndedGame', onAdminEndedGame);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomCode]);
@@ -141,6 +157,16 @@ export default function RoomPage() {
 
   function handleStartGame() {
     socketRef.current.emit('startGame');
+  }
+
+  function handleKick(targetUserId) {
+    if (!confirm('Bu oyuncuyu odadan atmak istediğine emin misin?')) return;
+    socketRef.current.emit('kickPlayer', { targetUserId });
+  }
+
+  function handleAbort() {
+    if (!confirm('Maçı erken bitirip odayı lobiye döndürmek istediğine emin misin?')) return;
+    socketRef.current.emit('abortGame');
   }
 
   function submitAbility(abilityKey, targetUserId, mode) {
@@ -185,27 +211,38 @@ export default function RoomPage() {
     <div className="page">
       <h1>Sarayda Gece</h1>
       <p className="subtitle">
-        Oda: <strong>{roomCode}</strong> — {PHASE_LABELS[phase]}
+        Oda: <strong>{roomCode}</strong> ({roomSize} kişilik) — {PHASE_LABELS[phase]}
         {dayNumber > 0 ? ` (${phase === 'NIGHT' ? 'Gece' : 'Gün'} ${dayNumber})` : ''}
         {secondsLeft !== null ? ` — ~${secondsLeft} sn` : ''}
       </p>
 
       {errorMessage && <div className="error-banner">{errorMessage}</div>}
+      {infoMessage && <div className="error-banner" style={{ background: 'rgba(58,122,77,0.2)', borderColor: 'var(--good)', color: '#bfe6cb' }}>{infoMessage}</div>}
+
+      <SeatTable
+        players={players}
+        hostUserId={hostUserId}
+        myUserId={user?.id}
+        centerLabel={`${roomCode}\n${PHASE_LABELS[phase]}`}
+        onKick={isHost && phase === 'LOBBY' ? handleKick : null}
+      />
+
+      {isHost && phase !== 'LOBBY' && !gameEndedData && (
+        <div className="center" style={{ marginBottom: 16 }}>
+          <button className="danger" onClick={handleAbort}>
+            Maçı Bitir / Odayı Sıfırla
+          </button>
+        </div>
+      )}
 
       {phase === 'LOBBY' && (
-        <div className="card">
-          <h3>Lobi ({players.length}/8)</h3>
-          <ul className="player-list">
-            {players.map((p) => (
-              <li key={p.userId}>
-                <span>{p.username}</span>
-                {p.userId === hostUserId && <span className="badge">Kurucu</span>}
-              </li>
-            ))}
-          </ul>
+        <div className="card center">
+          <p>
+            {players.length}/{roomSize} oyuncu hazır
+          </p>
           {isHost && (
-            <button onClick={handleStartGame} disabled={players.length !== 8} style={{ marginTop: 12, width: '100%' }}>
-              {players.length === 8 ? 'Oyunu Başlat' : `${8 - players.length} kişi daha bekleniyor`}
+            <button onClick={handleStartGame} disabled={players.length !== roomSize} style={{ width: '100%', marginTop: 8 }}>
+              {players.length === roomSize ? 'Oyunu Başlat' : `${roomSize - players.length} kişi daha bekleniyor`}
             </button>
           )}
         </div>
@@ -255,11 +292,6 @@ export default function RoomPage() {
         <div className="card">
           <h3>Tartışma Zamanı</h3>
           <p className="small">Kimin şüpheli olduğunu tartışın — sesli sohbet gündüz fazında herkese açık.</p>
-          <ul className="player-list">
-            {alivePlayers.map((p) => (
-              <li key={p.userId}>{p.username}</li>
-            ))}
-          </ul>
         </div>
       )}
 
