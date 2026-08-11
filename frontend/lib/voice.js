@@ -59,6 +59,22 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
         const dayClient = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
         dayClientRef.current = dayClient;
 
+        // ÖNEMLİ: `publish()` sadece KENDİ sesini gönderir — DİĞER oyuncuların
+        // seslerini duymak için onların yayınına ayrıca "abone" olup çalmamız
+        // (play) gerekir. Bu olmadan herkesin mikrofonu çalışsa da hiç kimse
+        // birbirini duyamaz (tam da yaşanan "ses gitmiyor" durumu). Bu dinleyiciyi
+        // join()'den ÖNCE kuruyoruz ki kanala girer girmez tetiklenen olayları
+        // kaçırmayalım.
+        dayClient.on('user-published', async (remoteUser, mediaType) => {
+          if (mediaType !== 'audio') return;
+          try {
+            const remoteTrack = await dayClient.subscribe(remoteUser, mediaType);
+            remoteTrack.play();
+          } catch (err) {
+            console.error('Genel kanal — uzak ses aboneliği başarısız:', err);
+          }
+        });
+
         const localTrack = await AgoraRTC.createMicrophoneAudioTrack();
         if (cancelled) {
           localTrack.close();
@@ -121,6 +137,19 @@ export function useVoiceChat({ appId, roomCode, userId, myRole, phase }) {
       try {
         const AgoraRTC = (await import('agora-rtc-sdk-ng')).default;
         const nightClient = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
+
+        // Aynı sebep: gizli kanaldaki diğer suikastçının sesini duymak için
+        // onun yayınına abone olmamız gerekiyor.
+        nightClient.on('user-published', async (remoteUser, mediaType) => {
+          if (mediaType !== 'audio') return;
+          try {
+            const remoteTrack = await nightClient.subscribe(remoteUser, mediaType);
+            remoteTrack.play();
+          } catch (err) {
+            console.error('Gizli kanal — uzak ses aboneliği başarısız:', err);
+          }
+        });
+
         const nightChannel = `${roomCode}-night-assassins`;
         const { token: nightToken } = await fetchVoiceToken(getToken(), nightChannel);
         await nightClient.join(appId, nightChannel, nightToken, `${userId}-night`);
