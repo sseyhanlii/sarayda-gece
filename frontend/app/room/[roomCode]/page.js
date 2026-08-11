@@ -522,8 +522,11 @@ function VoiceStatusBar({ voice, phase }) {
     <div className="card" style={{ padding: '10px 16px', marginBottom: 16 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <span className="small">
-          {phase === 'NIGHT' ? '🌙 Gece — genel kanal sessiz' : '🔊 Genel kanal açık'}
-          {voice.joined ? '' : ' (bağlanıyor...)'}
+          {!voice.joined
+            ? '🔌 Sesli sohbete bağlanıyor...'
+            : voice.dayMicOn
+            ? '🔊 Genel kanal açık — mikrofon aktif'
+            : '🌙 Genel kanal sessiz (mikrofon kapalı)'}
         </span>
         {voice.canUseNightChannel && (
           <button className={voice.nightMicOn ? 'danger' : 'secondary'} onClick={voice.toggleNightMic}>
