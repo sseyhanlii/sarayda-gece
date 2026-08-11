@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { fetchLeaderboard, fetchRoleLeaderboard } from '../../lib/api';
+import { fetchLeaderboard, fetchRoleLeaderboard, fetchMyProfile, deleteUserAccount } from '../../lib/api';
 import { ROLE_LABELS, ALL_ROLE_KEYS } from '../../lib/roles';
+import { getToken, isLoggedIn } from '../../lib/auth';
 import NavBar from '../../components/NavBar';
 
 export default function LeaderboardPage() {
@@ -10,8 +11,12 @@ export default function LeaderboardPage() {
   const [byRole, setByRole] = useState({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  // Owner (ya da "delete_users" izni verilmiş bir admin) sıralamadan direkt
+  // hesap silebilsin diye — normal kullanıcılar bu düğmeyi hiç görmez.
+  const [canDelete, setCanDelete] = useState(false);
 
-  useEffect(() => {
+  function loadLeaderboard() {
+    setLoading(true);
     Promise.all([fetchLeaderboard(), fetchRoleLeaderboard().catch(() => ({}))])
       .then(([general, roleData]) => {
         setRows(general);
@@ -19,7 +24,28 @@ export default function LeaderboardPage() {
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadLeaderboard();
+    if (isLoggedIn()) {
+      fetchMyProfile(getToken())
+        .then((profile) => {
+          setCanDelete(Boolean(profile.is_owner || profile.admin_permissions?.delete_users));
+        })
+        .catch(() => {});
+    }
   }, []);
+
+  async function handleDelete(row) {
+    if (!confirm(`${row.username} hesabını KALICI olarak silmek istediğine emin misin? Bu geri alınamaz.`)) return;
+    try {
+      await deleteUserAccount(getToken(), row.id);
+      loadLeaderboard();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
 
   return (
     <div>
@@ -45,7 +71,14 @@ export default function LeaderboardPage() {
                           ({row.total_wins}/{row.total_games} galibiyet, %{row.win_rate})
                         </span>
                       </span>
-                      <span className="badge">{row.total_score} puan</span>
+                      <span className="row" style={{ gap: 8 }}>
+                        <span className="badge">{row.total_score} puan</span>
+                        {canDelete && (
+                          <button className="danger" onClick={() => handleDelete(row)} style={{ padding: '4px 10px', fontSize: '0.75rem' }}>
+                            Sil
+                          </button>
+                        )}
+                      </span>
                     </li>
                   ))}
                 </ul>

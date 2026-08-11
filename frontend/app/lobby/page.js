@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { getSocket } from '../../lib/socket';
 import { getUser, isLoggedIn } from '../../lib/auth';
 import { ROOM_SIZES, ROOM_SIZE_ROLE_SETS, ROLE_LABELS, ROOM_SIZE_NAMES } from '../../lib/roles';
+import { fetchPublicSettings } from '../../lib/api';
 import NavBar from '../../components/NavBar';
 
 export default function LobbyPage() {
@@ -13,6 +14,12 @@ export default function LobbyPage() {
   const [roomSize, setRoomSize] = useState(8);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Oda isimleri ve rol dağılımları artık admin panelinden istenildiği zaman
+  // değiştirilebiliyor — bu yüzden sabit lib/roles.js değerlerini SADECE
+  // yedek (backend'e erişilemezse) olarak kullanıyoruz, asıl güncel veriyi
+  // sunucudan çekiyoruz.
+  const [roomNames, setRoomNames] = useState(ROOM_SIZE_NAMES);
+  const [roleSets, setRoleSets] = useState(ROOM_SIZE_ROLE_SETS);
   const user = getUser();
 
   useEffect(() => {
@@ -20,6 +27,13 @@ export default function LobbyPage() {
       router.replace('/login');
       return;
     }
+
+    fetchPublicSettings()
+      .then((s) => {
+        if (s.roomNames) setRoomNames(s.roomNames);
+        if (s.roleSets) setRoleSets(s.roleSets);
+      })
+      .catch(() => {}); // backend'e erişilemezse yedek değerlerle devam et
 
     const socket = getSocket();
 
@@ -70,14 +84,14 @@ export default function LobbyPage() {
             <select value={roomSize} onChange={(e) => setRoomSize(Number(e.target.value))}>
               {ROOM_SIZES.map((size) => (
                 <option key={size} value={size}>
-                  {size} kişilik — {ROOM_SIZE_NAMES[size]}
+                  {size} kişilik — {roomNames[size]}
                 </option>
               ))}
             </select>
           </div>
           <p className="small">
-            <strong>{ROOM_SIZE_NAMES[roomSize]}</strong>'nde oynanacak roller:{' '}
-            {ROOM_SIZE_ROLE_SETS[roomSize].map((key) => ROLE_LABELS[key]).join(', ')}
+            <strong>{roomNames[roomSize]}</strong>'nde oynanacak roller:{' '}
+            {(roleSets[roomSize] || []).map((key) => ROLE_LABELS[key]).join(', ')}
           </p>
           <button onClick={handleCreateRoom} disabled={busy} style={{ width: '100%', marginTop: 8 }}>
             Oda Oluştur

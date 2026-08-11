@@ -33,13 +33,14 @@ export default function SeatTable({ players, hostUserId, myUserId, centerLabel, 
             className={`seat ${isHost ? 'host' : ''} ${isDead ? 'dead' : ''} ${isSpeaking ? 'speaking' : ''}`}
             style={{ left: `${left}%`, top: `${top}%` }}
           >
-            <div className="seat-avatar" style={{ borderColor: color, boxShadow: isSpeaking ? `0 0 0 4px ${color}` : undefined }}>
+            <div className="seat-avatar" style={{ borderColor: color, '--speak-color': color }}>
               {p.avatarUrl ? (
                 <img src={p.avatarUrl} alt={p.username} className="seat-avatar-img" />
               ) : (
                 p.avatarEmoji || '👤'
               )}
               {isDead && <span className="seat-dead-mark">💀</span>}
+              {p.isBot && !isDead && <span className="seat-bot-mark">🤖</span>}
             </div>
             <div className="seat-name" style={{ color }}>
               {p.username}

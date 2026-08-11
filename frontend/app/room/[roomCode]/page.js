@@ -4,13 +4,15 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { getSocket } from '../../../lib/socket';
 import { getUser, isLoggedIn } from '../../../lib/auth';
+import { fetchPublicSettings } from '../../../lib/api';
 import {
   ROLE_LABELS,
   ROLE_DESCRIPTIONS,
   TEAM_LABELS,
-  ALL_ROLE_KEYS,
   ROOM_SIZE_ROLE_SETS,
   ROOM_SIZE_NAMES,
+  NIGHT_ACTION_ROLES,
+  ASSASSIN_TEAM_ROLES,
   getPlayerColor,
 } from '../../../lib/roles';
 import SeatTable from '../../../components/SeatTable';
@@ -18,9 +20,11 @@ import { useVoiceChat } from '../../../lib/voice';
 
 const AGORA_APP_ID = process.env.NEXT_PUBLIC_AGORA_APP_ID || '';
 
-// Backend'deki sabitlerle birebir eşleşir (bkz. backend/game/gameRoom.js)
-const PHASE_DURATIONS = {
-  NIGHT: 15,
+// Sadece backend'e hiç erişilemezse kullanılan yedek değerler — asıl güncel
+// süreler /api/settings/public'ten çekilir (owner admin panelinden değiştirince
+// yeni deploy gerekmeden yansır).
+const FALLBACK_PHASE_DURATIONS = {
+  NIGHT: 20,
   DAY_DISCUSSION: 40,
   DAY_VOTE: 15,
   PENDING_EXECUTION: 15,
@@ -49,6 +53,8 @@ export default function RoomPage() {
 
   const [players, setPlayers] = useState([]);
   const [roomSize, setRoomSize] = useState(8);
+  const [roomName, setRoomName] = useState(null);
+  const [roomRoleSet, setRoomRoleSet] = useState(null);
   const [hostUserId, setHostUserId] = useState(null);
   const [phase, setPhase] = useState('LOBBY');
   const [dayNumber, setDayNumber] = useState(0);
@@ -59,6 +65,7 @@ export default function RoomPage() {
   const [abilityResult, setAbilityResult] = useState(null);
   const [nightDeaths, setNightDeaths] = useState(null);
   const [voteTally, setVoteTally] = useState({});
+  const [assassinVoteTally, setAssassinVoteTally] = useState({});
   const [pendingExecutionTarget, setPendingExecutionTarget] = useState(null);
   const [princessRevealedUserId, setPrincessRevealedUserId] = useState(null);
   const [lastExecution, setLastExecution] = useState(null);
@@ -67,8 +74,26 @@ export default function RoomPage() {
   const [secondsLeft, setSecondsLeft] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
+  const [durations, setDurations] = useState(FALLBACK_PHASE_DURATIONS);
+  const [teammates, setTeammates] = useState(null); // vampir takım arkadaşları (bkz. teammatesRevealed)
+  const [loverInfo, setLoverInfo] = useState(null); // Aşko'nun eşleştirdiği aşk çifti (bkz. loverRevealed)
 
   const socketRef = useRef(null);
+
+  // Faz süreleri artık admin panelinden değiştirilebiliyor — sayfa açılışında
+  // güncel değerleri çek (backend'e erişilemezse yukarıdaki yedeklerle devam et).
+  useEffect(() => {
+    fetchPublicSettings()
+      .then((s) =>
+        setDurations({
+          NIGHT: Math.round(s.nightDurationMs / 1000),
+          DAY_DISCUSSION: Math.round(s.dayDurationMs / 1000),
+          DAY_VOTE: Math.round(s.voteDurationMs / 1000),
+          PENDING_EXECUTION: 15,
+        })
+      )
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -92,6 +117,8 @@ export default function RoomPage() {
       setHostUserId(state.hostUserId);
       setPhase(state.phase);
       if (state.roomSize) setRoomSize(state.roomSize);
+      if (state.roomName) setRoomName(state.roomName);
+      if (state.roleSet) setRoomRoleSet(state.roleSet);
     };
     const onGameStarted = ({ yourRole, team }) => {
       setMyRole(yourRole);
@@ -100,6 +127,8 @@ export default function RoomPage() {
       setNightDeaths(null);
       setLastExecution(null);
       setPrincessRevealedUserId(null);
+      setTeammates(null);
+      setLoverInfo(null);
     };
     const onPhaseChanged = ({ phase: newPhase, dayNumber: newDay }) => {
       setPhase(newPhase);
@@ -108,14 +137,18 @@ export default function RoomPage() {
       setAbilityResult(null);
       setPendingExecutionTarget(null);
       setVoteTally({});
+      setAssassinVoteTally({});
     };
     const onAbilityResult = (payload) => setAbilityResult(payload);
     const onNightResult = ({ deaths }) => setNightDeaths(deaths);
     const onVoteUpdate = ({ votes }) => setVoteTally(votes);
+    const onAssassinVoteUpdate = ({ votes }) => setAssassinVoteTally(votes);
     const onPendingExecution = ({ targetUserId }) => setPendingExecutionTarget(targetUserId);
     const onPrincessRevealed = ({ userId }) => setPrincessRevealedUserId(userId);
     const onExecutionResult = (payload) => setLastExecution(payload);
     const onGameEnded = (payload) => setGameEndedData(payload);
+    const onTeammatesRevealed = ({ teammates: t }) => setTeammates(t);
+    const onLoverRevealed = ({ lovers }) => setLoverInfo(lovers);
     const onError = (payload) => setErrorMessage(payload.message);
     const onKicked = () => {
       alert('Oda kurucusu seni odadan çıkardı.');
@@ -133,10 +166,13 @@ export default function RoomPage() {
     socket.on('abilityResult', onAbilityResult);
     socket.on('nightResult', onNightResult);
     socket.on('voteUpdate', onVoteUpdate);
+    socket.on('assassinVoteUpdate', onAssassinVoteUpdate);
     socket.on('pendingExecution', onPendingExecution);
     socket.on('princessRevealed', onPrincessRevealed);
     socket.on('executionResult', onExecutionResult);
     socket.on('gameEnded', onGameEnded);
+    socket.on('teammatesRevealed', onTeammatesRevealed);
+    socket.on('loverRevealed', onLoverRevealed);
     socket.on('error', onError);
     socket.on('kickedFromRoom', onKicked);
     socket.on('roomClosedByAdmin', onRoomClosedByAdmin);
@@ -150,10 +186,13 @@ export default function RoomPage() {
       socket.off('abilityResult', onAbilityResult);
       socket.off('nightResult', onNightResult);
       socket.off('voteUpdate', onVoteUpdate);
+      socket.off('assassinVoteUpdate', onAssassinVoteUpdate);
       socket.off('pendingExecution', onPendingExecution);
       socket.off('princessRevealed', onPrincessRevealed);
       socket.off('executionResult', onExecutionResult);
       socket.off('gameEnded', onGameEnded);
+      socket.off('teammatesRevealed', onTeammatesRevealed);
+      socket.off('loverRevealed', onLoverRevealed);
       socket.off('error', onError);
       socket.off('kickedFromRoom', onKicked);
       socket.off('roomClosedByAdmin', onRoomClosedByAdmin);
@@ -167,7 +206,7 @@ export default function RoomPage() {
   // Faz değişince yaklaşık bir geri sayım başlat (sunucuyla tam senkron değil,
   // sadece oyunculara "ne kadar zaman kaldı" hissi vermek için).
   useEffect(() => {
-    const duration = PHASE_DURATIONS[phase];
+    const duration = durations[phase];
     if (!duration) {
       setSecondsLeft(null);
       return;
@@ -177,13 +216,14 @@ export default function RoomPage() {
       setSecondsLeft((s) => (s && s > 0 ? s - 1 : 0));
     }, 1000);
     return () => clearInterval(interval);
-  }, [phase, dayNumber]);
+  }, [phase, dayNumber, durations]);
 
   const isHost = user?.id === hostUserId;
   const me = players.find((p) => p.userId === user?.id);
   const alivePlayers = players.filter((p) => p.isAlive);
   const othersAlive = alivePlayers.filter((p) => p.userId !== user?.id);
-  const roomDisplayName = ROOM_SIZE_NAMES[roomSize] || `${roomSize} Kişilik Oda`;
+  const roomDisplayName = roomName || ROOM_SIZE_NAMES[roomSize] || `${roomSize} Kişilik Oda`;
+  const activeRoleSet = roomRoleSet || ROOM_SIZE_ROLE_SETS[roomSize] || [];
 
   // Sesli sohbet: Lobi dışında (rol atanmışsa) bağlan. myRole başta null olduğu için
   // suikastçı özel kanalı rol atandıktan sonra devreye girer, gündüz/gece herkes için
@@ -235,9 +275,15 @@ export default function RoomPage() {
     router.push('/lobby');
   }
 
-  function submitAbility(abilityKey, targetUserId, mode) {
-    socketRef.current.emit('useAbility', { abilityKey, targetUserId, mode });
+  function submitAbility(abilityKey, targetUserId, mode, targetUserId2) {
+    socketRef.current.emit('useAbility', { abilityKey, targetUserId, mode, targetUserId2 });
     setActionSubmitted(true);
+  }
+
+  // Vampir takımının gece suikast hedefi oylaması: day-vote gibi CANLI ve
+  // TEKRAR TEKRAR değiştirilebilir — tek bir gönderimde paneli kilitlemez.
+  function submitAssassinVote(targetUserId) {
+    socketRef.current.emit('useAbility', { abilityKey: 'ASSASSIN_CHOOSE_TARGET', targetUserId });
   }
 
   function submitVote(targetUserId) {
@@ -409,6 +455,34 @@ export default function RoomPage() {
         </div>
       )}
 
+      {/* Vampirler birbirini tanır: takım arkadaşlarının kimliği oyun boyunca
+          burada görünür kalır. */}
+      {teammates && teammates.length > 0 && (
+        <div className="card" style={{ borderColor: '#6a4c93' }}>
+          <h3 style={{ marginTop: 0, color: '#6a4c93' }}>🧛 Vampir Takım Arkadaşların</h3>
+          <ul className="player-list">
+            {teammates.map((t) => (
+              <li key={t.userId}>
+                <span style={{ color: getPlayerColor(t.userId) }}>{t.username}</span>
+                <span className="badge">{ROLE_LABELS[t.role]}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Aşko'nun eşleştirdiği aşk çifti, eşleşen iki oyuncuya oyun boyunca görünür. */}
+      {loverInfo && loverInfo.length === 2 && (
+        <div className="card" style={{ borderColor: '#ff5fa2' }}>
+          <h3 style={{ marginTop: 0 }}>💘 Aşkın</h3>
+          <p>
+            <strong>{loverInfo.find((l) => l.userId !== user?.id)?.username || loverInfo[0].username}</strong> ile
+            birbirinize aşıksınız — sadece ikiniz birlikte son ikiye kalırsanız kazanırsınız, kendi takımınızla
+            kazanamazsınız. Biriniz ölürse diğeriniz de kalbi kırılarak ölür.
+          </p>
+        </div>
+      )}
+
       {phase === 'NIGHT' && !isSpectating && (
         <NightActionPanel
           myRole={myRole}
@@ -416,7 +490,10 @@ export default function RoomPage() {
           isAlive={me?.isAlive}
           actionSubmitted={actionSubmitted}
           abilityResult={abilityResult}
+          assassinVoteTally={assassinVoteTally}
+          roomRoleSet={activeRoleSet}
           onSubmit={submitAbility}
+          onSubmitAssassinVote={submitAssassinVote}
         />
       )}
 
@@ -432,7 +509,7 @@ export default function RoomPage() {
                 return (
                   <li key={d.userId} className="dead">
                     <span style={{ color: getPlayerColor(d.userId) }}>{player?.username || d.userId}</span>
-                    <span className="badge">{d.cause}</span>
+                    <span className="badge">{d.cause === 'ASIK_ACISI' ? '💔 Aşk Acısı' : d.cause}</span>
                   </li>
                 );
               })}
@@ -463,6 +540,15 @@ export default function RoomPage() {
             <strong>{players.find((p) => p.userId === lastExecution.userId)?.username}</strong> idam edildi. Rolü:{' '}
             <span className="badge">{ROLE_LABELS[lastExecution.roleReveal] || '?'}</span>
           </p>
+          {lastExecution.extraDeaths?.length > 0 && (
+            <p className="small" style={{ marginTop: 6 }}>
+              💔 Ve kalbi kırılan{' '}
+              {lastExecution.extraDeaths
+                .map((d) => players.find((p) => p.userId === d.userId)?.username || d.userId)
+                .join(', ')}{' '}
+              de aşk acısından öldü.
+            </p>
+          )}
         </div>
       )}
 
@@ -480,11 +566,12 @@ export default function RoomPage() {
       )}
 
       {/* Odadaki roller açıklaması — oyun boyunca alt kısımda sabit, hangi
-          rollerin bu oda boyutunda oynanabildiğini herkes görebilsin. */}
+          rollerin bu oda boyutunda oynanabildiğini herkes görebilsin. Sunucudan
+          gelen GÜNCEL rol setini kullanır (admin panelinden değişmiş olabilir). */}
       <div className="card roles-info-card">
         <h3 style={{ marginTop: 0 }}>{roomDisplayName} — Bu Odadaki Roller</h3>
         <ul>
-          {(ROOM_SIZE_ROLE_SETS[roomSize] || []).map((key) => (
+          {activeRoleSet.map((key) => (
             <li key={key}>
               <strong>{ROLE_LABELS[key]}</strong> — {ROLE_DESCRIPTIONS[key]}
             </li>
@@ -540,16 +627,45 @@ function ChatBox({ messages, myUserId, canChat, phase, input, onInputChange, onS
   );
 }
 
-function NightActionPanel({ myRole, othersAlive, isAlive, actionSubmitted, abilityResult, onSubmit }) {
+function NightActionPanel({
+  myRole,
+  othersAlive,
+  isAlive,
+  actionSubmitted,
+  abilityResult,
+  assassinVoteTally,
+  roomRoleSet,
+  onSubmit,
+  onSubmitAssassinVote,
+}) {
   const [target, setTarget] = useState('');
   const [doctorMode, setDoctorMode] = useState('antidote');
-  const [lockRole, setLockRole] = useState('');
+  const [loverA, setLoverA] = useState('');
+  const [loverB, setLoverB] = useState('');
+  const [cupidSent, setCupidSent] = useState(false);
 
   if (!isAlive) {
     return (
       <div className="card center">
         <p className="small">Elendin — bu gece sadece izleyicisin.</p>
       </div>
+    );
+  }
+
+  // Vampir takımı (Gölge Lider + Zehirbaz): gece boyu CANLI oylanabilen ortak
+  // suikast hedefi + role özel tek seferlik ek güç — paylaşılan "actionSubmitted"
+  // kilidine tabi DEĞİL, çünkü oy day-vote gibi tekrar tekrar değiştirilebilmeli.
+  if (ASSASSIN_TEAM_ROLES.includes(myRole)) {
+    return (
+      <AssassinNightPanel
+        myRole={myRole}
+        othersAlive={othersAlive}
+        assassinVoteTally={assassinVoteTally}
+        roomRoleSet={roomRoleSet}
+        onSubmitVote={onSubmitAssassinVote}
+        onSubmit={onSubmit}
+        abilityResult={abilityResult}
+      />
     );
   }
 
@@ -590,29 +706,6 @@ function NightActionPanel({ myRole, othersAlive, isAlive, actionSubmitted, abili
     );
   }
 
-  if (myRole === 'GOLGE_LIDER') {
-    return (
-      <div className="card">
-        <h3>Suikast hedefi</h3>
-        <TargetSelect players={othersAlive} value={target} onChange={setTarget} />
-        <button disabled={!target} onClick={() => onSubmit('ASSASSIN_CHOOSE_TARGET', target)} style={{ marginTop: 10, width: '100%' }}>
-          Hedefi Belirle
-        </button>
-        <p className="small" style={{ marginTop: 10 }}>
-          Oyun boyu 1 kez, hedefinin Gubiş olup olmadığını da sorgulayabilirsin (bu hakkı ayrı kullan).
-        </p>
-        <button
-          className="secondary"
-          disabled={!target}
-          onClick={() => onSubmit('QUERY_IS_PRINCESS', target)}
-          style={{ width: '100%' }}
-        >
-          Gubiş mi diye sorgula
-        </button>
-      </div>
-    );
-  }
-
   if (myRole === 'HEKIM') {
     return (
       <div className="card">
@@ -636,22 +729,32 @@ function NightActionPanel({ myRole, othersAlive, isAlive, actionSubmitted, abili
     );
   }
 
-  if (myRole === 'ZEHIRBAZ') {
+  if (myRole === 'ASKO') {
+    if (cupidSent) {
+      return (
+        <div className="card center">
+          <p>💘 Aşk okunu attın. Sabahı bekle...</p>
+        </div>
+      );
+    }
     return (
       <div className="card">
-        <h3>Hangi rolü kilitleyeceksin?</h3>
-        <div className="field">
-          <select value={lockRole} onChange={(e) => setLockRole(e.target.value)}>
-            <option value="">Seç...</option>
-            {ALL_ROLE_KEYS.map((key) => (
-              <option key={key} value={key}>
-                {ROLE_LABELS[key]}
-              </option>
-            ))}
-          </select>
-        </div>
-        <button disabled={!lockRole} onClick={() => onSubmit('POISONER_LOCK_ABILITY', lockRole)} style={{ width: '100%' }}>
-          Kilitle (oyun boyu 1 kez)
+        <h3>💘 İki oyuncuyu aşık et</h3>
+        <p className="small">
+          Seçtiğin iki oyuncu birbirine aşık olur — sadece ikisi birlikte son ikiye kalırsa kazanırlar, kendi
+          takımlarıyla kazanamazlar. Bu güç oyun boyu 1 kez kullanılabilir.
+        </p>
+        <TargetSelect players={othersAlive} value={loverA} onChange={setLoverA} />
+        <TargetSelect players={othersAlive.filter((p) => p.userId !== loverA)} value={loverB} onChange={setLoverB} />
+        <button
+          disabled={!loverA || !loverB || loverA === loverB}
+          onClick={() => {
+            onSubmit('CUPID_MATCH_LOVERS', loverA, undefined, loverB);
+            setCupidSent(true);
+          }}
+          style={{ marginTop: 10, width: '100%' }}
+        >
+          Aşık Et
         </button>
       </div>
     );
@@ -660,6 +763,110 @@ function NightActionPanel({ myRole, othersAlive, isAlive, actionSubmitted, abili
   return (
     <div className="card center">
       <p className="small">Bu gece pasifsin — sabahı bekle.</p>
+    </div>
+  );
+}
+
+// Gölge Lider ve Zehirbaz için ortak panel: ikisi de vampir takımı olarak gece
+// suikast hedefini birlikte oylar (çoğunluk kazanır, day-vote gibi canlı ve
+// tekrar değiştirilebilir), üstüne kendi rolüne özel tek seferlik gücü ayrıca
+// (panelin geri kalanını kilitlemeden) kullanabilir.
+function AssassinNightPanel({ myRole, othersAlive, assassinVoteTally, roomRoleSet, onSubmitVote, onSubmit, abilityResult }) {
+  const [voteTarget, setVoteTarget] = useState('');
+  const [voteSent, setVoteSent] = useState(false);
+  const [queryTarget, setQueryTarget] = useState('');
+  const [querySent, setQuerySent] = useState(false);
+  const [lockRole, setLockRole] = useState('');
+  const [lockSent, setLockSent] = useState(false);
+
+  function submitVote() {
+    if (!voteTarget) return;
+    onSubmitVote(voteTarget);
+    setVoteSent(true);
+  }
+
+  const lockableRoles = (roomRoleSet || []).filter((k) => NIGHT_ACTION_ROLES.includes(k));
+
+  return (
+    <div className="card">
+      <h3>🗡️ Suikast Hedefi (Vampir Oylaması)</h3>
+      <p className="small">Sen ve diğer vampir(ler) birlikte hedef seçiyorsunuz — en çok oy alan hedef suikaste uğrar.</p>
+      <TargetSelect players={othersAlive} value={voteTarget} onChange={setVoteTarget} />
+      <button onClick={submitVote} disabled={!voteTarget} style={{ marginTop: 10, width: '100%' }}>
+        {voteSent ? '✔ Oyunu Güncelle' : 'Hedefi Seç'}
+      </button>
+      {Object.keys(assassinVoteTally || {}).length > 0 && (
+        <ul className="player-list" style={{ marginTop: 10 }}>
+          {othersAlive
+            .filter((p) => assassinVoteTally[p.userId])
+            .map((p) => (
+              <li key={p.userId}>
+                <span style={{ color: getPlayerColor(p.userId) }}>{p.username}</span>
+                <span className="badge">{assassinVoteTally[p.userId]} oy</span>
+              </li>
+            ))}
+        </ul>
+      )}
+
+      {myRole === 'GOLGE_LIDER' && (
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed var(--accent-soft)' }}>
+          <p className="small">Oyun boyu 1 kez, hedefinin Gubiş olup olmadığını sorgulayabilirsin.</p>
+          {querySent ? (
+            <p className="small">
+              Sorgu gönderildi.{' '}
+              {abilityResult?.abilityKey === 'QUERY_IS_PRINCESS' && <span className="badge">{abilityResult.result}</span>}
+            </p>
+          ) : (
+            <>
+              <TargetSelect players={othersAlive} value={queryTarget} onChange={setQueryTarget} />
+              <button
+                className="secondary"
+                disabled={!queryTarget}
+                onClick={() => {
+                  onSubmit('QUERY_IS_PRINCESS', queryTarget);
+                  setQuerySent(true);
+                }}
+                style={{ width: '100%' }}
+              >
+                Gubiş mi diye sorgula
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {myRole === 'ZEHIRBAZ' && (
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed var(--accent-soft)' }}>
+          <p className="small">Oyun boyu 1 kez, bu odada bulunan bir rolün gece yeteneğini kilitleyebilirsin.</p>
+          {lockSent ? (
+            <p className="small">Kilitleme gönderildi.</p>
+          ) : (
+            <>
+              <div className="field">
+                <select value={lockRole} onChange={(e) => setLockRole(e.target.value)}>
+                  <option value="">Seç...</option>
+                  {lockableRoles.map((key) => (
+                    <option key={key} value={key}>
+                      {ROLE_LABELS[key]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                className="secondary"
+                disabled={!lockRole}
+                onClick={() => {
+                  onSubmit('POISONER_LOCK_ABILITY', lockRole);
+                  setLockSent(true);
+                }}
+                style={{ width: '100%' }}
+              >
+                Kilitle (oyun boyu 1 kez)
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

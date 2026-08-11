@@ -152,3 +152,39 @@ export function fetchVoiceToken(token, channelName) {
     headers: authHeader(token),
   });
 }
+
+// ---------- Oyun ayarları (gece/gündüz/oylama süresi, oda isimleri, rol dağılımları) ----------
+// Herkese açık — oturum gerektirmez, lobi ve oda sayfaları buradan güncel
+// değerleri çeker (owner ayarı değiştirdiği anda yeni deploy gerekmeden yansır).
+export function fetchPublicSettings() {
+  return request('/api/settings/public');
+}
+
+export function fetchAdminSettings(token) {
+  return request('/api/admin/settings', { headers: authHeader(token) });
+}
+
+export function updateAdminSettings(token, settings) {
+  return request('/api/admin/settings', {
+    method: 'PUT',
+    headers: authHeader(token),
+    body: JSON.stringify(settings),
+  });
+}
+
+// SADECE owner: bir admin'in izinlerini tek tek açar/kapatır.
+export function updateAdminPermissions(token, userId, permissions) {
+  return request(`/api/admin/users/${userId}/permissions`, {
+    method: 'PATCH',
+    headers: authHeader(token),
+    body: JSON.stringify({ permissions }),
+  });
+}
+
+// Yönetici tek tuşla odaya bot ekler.
+export function addBotToRoom(token, roomCode) {
+  return request(`/api/admin/rooms/${roomCode}/add-bot`, {
+    method: 'POST',
+    headers: authHeader(token),
+  });
+}

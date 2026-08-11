@@ -13,8 +13,13 @@ import {
   deleteUserAccount,
   fetchPendingAvatars,
   reviewAvatar,
+  fetchAdminSettings,
+  updateAdminSettings,
+  updateAdminPermissions,
+  addBotToRoom,
 } from '../../lib/api';
 import { getToken, getUser, isLoggedIn } from '../../lib/auth';
+import { ADMIN_PERMISSION_LABELS, ALL_ROLE_KEYS, ROLE_LABELS } from '../../lib/roles';
 import NavBar from '../../components/NavBar';
 
 export default function AdminPage() {
@@ -46,7 +51,12 @@ export default function AdminPage() {
   function loadAll() {
     setLoading(true);
     const token = getToken();
-    Promise.all([fetchAdminUsers(token), fetchAdminRooms(token), fetchPendingAvatars(token), fetchMyProfile(token)])
+    Promise.all([
+      fetchAdminUsers(token),
+      fetchAdminRooms(token),
+      fetchPendingAvatars(token).catch(() => []),
+      fetchMyProfile(token),
+    ])
       .then(([usersData, roomsData, avatarsData, myProfile]) => {
         setUsers(usersData);
         setRooms(roomsData);
@@ -96,10 +106,30 @@ export default function AdminPage() {
     }
   }
 
+  async function handlePermissionToggle(u, key) {
+    const current = u.admin_permissions || {};
+    const next = { ...current, [key]: !current[key] };
+    try {
+      await updateAdminPermissions(getToken(), u.id, next);
+      loadAll();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function endRoom(roomCode) {
     if (!confirm(`${roomCode} kodlu odayı sonlandırmak istediğine emin misin?`)) return;
     try {
       await endRoomAsAdmin(getToken(), roomCode);
+      loadAll();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleAddBot(roomCode) {
+    try {
+      await addBotToRoom(getToken(), roomCode);
       loadAll();
     } catch (err) {
       setError(err.message);
@@ -137,6 +167,9 @@ export default function AdminPage() {
           </button>
           <button className={tab === 'avatars' ? '' : 'secondary'} onClick={() => setTab('avatars')}>
             Fotoğraf Onayı ({pendingAvatars.length})
+          </button>
+          <button className={tab === 'settings' ? '' : 'secondary'} onClick={() => setTab('settings')}>
+            ⚙️ Oyun Ayarları
           </button>
           <button className="secondary" onClick={loadAll}>
             Yenile
@@ -192,6 +225,22 @@ export default function AdminPage() {
                           </>
                         )}
                       </div>
+                      {isOwner && u.is_admin && !u.is_owner && (
+                        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--accent-soft)' }}>
+                          <p className="small" style={{ margin: '0 0 4px' }}>Bu admin'in yetkileri:</p>
+                          {Object.keys(ADMIN_PERMISSION_LABELS).map((key) => (
+                            <label key={key} className="small" style={{ display: 'block', marginBottom: 2, cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={Boolean(u.admin_permissions?.[key])}
+                                onChange={() => handlePermissionToggle(u, key)}
+                                style={{ marginRight: 6 }}
+                              />
+                              {ADMIN_PERMISSION_LABELS[key]}
+                            </label>
+                          ))}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -199,7 +248,7 @@ export default function AdminPage() {
             </table>
             {!isOwner && (
               <p className="small" style={{ marginTop: 10 }}>
-                Not: Admin atama ve hesap silme sadece baş yöneticide (owner) açık — senin yetkilerin sınırlı.
+                Not: Admin atama ve hesap silme (izin verilmedikçe) sadece baş yöneticide (owner) açık.
               </p>
             )}
           </div>
@@ -215,7 +264,12 @@ export default function AdminPage() {
                       <strong>{r.roomCode}</strong> — {r.roomSize} kişilik, {r.playerCount} oyuncu,{' '}
                       <span className="small">faz: {r.phase}</span>
                     </span>
-                    <div className="row">
+                    <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
+                      {r.phase === 'LOBBY' && r.playerCount < r.roomSize && (
+                        <button className="secondary" onClick={() => handleAddBot(r.roomCode)}>
+                          🤖 Bot Ekle
+                        </button>
+                      )}
                       <button className="secondary" onClick={() => spectateRoom(r.roomCode)}>
                         🕵️ Gizlice İzle
                       </button>
@@ -228,7 +282,7 @@ export default function AdminPage() {
               </ul>
             )}
           </div>
-        ) : (
+        ) : tab === 'avatars' ? (
           <div className="card">
             {pendingAvatars.length === 0 ? (
               <p className="small center">Onay bekleyen fotoğraf yok.</p>
@@ -251,8 +305,177 @@ export default function AdminPage() {
               </ul>
             )}
           </div>
+        ) : (
+          <GameSettingsPanel onError={setError} />
         )}
       </div>
+    </div>
+  );
+}
+
+// Oyun ayarları paneli: gece/gündüz/oylama süresi, oda isimleri, ve her oda
+// boyutu için hangi rollerin oynanacağı — istenildiği zaman değiştirilebilir,
+// kaydedilince anında (yeniden deploy gerekmeden) yeni odalara uygulanır.
+function GameSettingsPanel({ onError }) {
+  const [settings, setSettings] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    fetchAdminSettings(getToken())
+      .then((s) =>
+        setSettings({
+          nightSeconds: Math.round(s.nightDurationMs / 1000),
+          daySeconds: Math.round(s.dayDurationMs / 1000),
+          voteSeconds: Math.round(s.voteDurationMs / 1000),
+          roomNames: { ...s.roomNames },
+          roleSets: Object.fromEntries(Object.entries(s.roleSets).map(([size, keys]) => [size, [...keys]])),
+          supportedRoomSizes: s.supportedRoomSizes,
+        })
+      )
+      .catch((err) => onError(err.message))
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (loading || !settings) return <p className="center small">Yükleniyor...</p>;
+
+  function toggleRole(size, roleKey) {
+    setSettings((prev) => {
+      const current = prev.roleSets[size] || [];
+      const next = current.includes(roleKey) ? current.filter((k) => k !== roleKey) : [...current, roleKey];
+      return { ...prev, roleSets: { ...prev.roleSets, [size]: next } };
+    });
+  }
+
+  async function handleSave() {
+    setSuccess('');
+    for (const size of settings.supportedRoomSizes) {
+      if ((settings.roleSets[size] || []).length !== Number(size)) {
+        onError(`${size} kişilik oda için tam olarak ${size} rol seçmelisin (şu an ${settings.roleSets[size]?.length || 0}).`);
+        return;
+      }
+    }
+    setSaving(true);
+    try {
+      await updateAdminSettings(getToken(), {
+        nightDurationMs: settings.nightSeconds * 1000,
+        dayDurationMs: settings.daySeconds * 1000,
+        voteDurationMs: settings.voteSeconds * 1000,
+        roomNames: settings.roomNames,
+        roleSets: settings.roleSets,
+      });
+      setSuccess('Ayarlar kaydedildi — bundan sonra oluşturulacak odalarda geçerli olacak.');
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      {success && (
+        <div className="error-banner" style={{ background: 'rgba(58,122,77,0.2)', borderColor: 'var(--good)', color: '#bfe6cb' }}>
+          {success}
+        </div>
+      )}
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Faz Süreleri</h3>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 16 }}>
+          <div className="field" style={{ flex: 1, minWidth: 120 }}>
+            <label>Gece (saniye)</label>
+            <input
+              type="number"
+              min={3}
+              max={300}
+              value={settings.nightSeconds}
+              onChange={(e) => setSettings((p) => ({ ...p, nightSeconds: Number(e.target.value) }))}
+            />
+          </div>
+          <div className="field" style={{ flex: 1, minWidth: 120 }}>
+            <label>Gündüz Tartışma (saniye)</label>
+            <input
+              type="number"
+              min={3}
+              max={300}
+              value={settings.daySeconds}
+              onChange={(e) => setSettings((p) => ({ ...p, daySeconds: Number(e.target.value) }))}
+            />
+          </div>
+          <div className="field" style={{ flex: 1, minWidth: 120 }}>
+            <label>Oylama (saniye)</label>
+            <input
+              type="number"
+              min={3}
+              max={300}
+              value={settings.voteSeconds}
+              onChange={(e) => setSettings((p) => ({ ...p, voteSeconds: Number(e.target.value) }))}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Oda İsimleri</h3>
+        {settings.supportedRoomSizes.map((size) => (
+          <div className="field" key={size}>
+            <label>{size} kişilik oda</label>
+            <input
+              value={settings.roomNames[size] || ''}
+              onChange={(e) => setSettings((p) => ({ ...p, roomNames: { ...p.roomNames, [size]: e.target.value } }))}
+              maxLength={40}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Rol Dağılımları</h3>
+        <p className="small">Her oda boyutu için TAM OLARAK o kadar rol seçmelisin (örn. 4 kişilik oda = tam 4 rol).</p>
+        {settings.supportedRoomSizes.map((size) => {
+          const selected = settings.roleSets[size] || [];
+          return (
+            <div key={size} style={{ marginBottom: 16 }}>
+              <h4 style={{ margin: '0 0 6px', color: 'var(--accent)' }}>
+                {size} kişilik ({selected.length}/{size} seçili)
+              </h4>
+              <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+                {ALL_ROLE_KEYS.map((key) => (
+                  <label
+                    key={key}
+                    className="small"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '4px 10px',
+                      borderRadius: 999,
+                      border: '2px solid var(--accent-soft)',
+                      background: selected.includes(key) ? 'var(--accent-soft)' : 'transparent',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(key)}
+                      onChange={() => toggleRole(size, key)}
+                      style={{ margin: 0 }}
+                    />
+                    {ROLE_LABELS[key]}
+                  </label>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <button onClick={handleSave} disabled={saving} style={{ width: '100%' }}>
+        {saving ? 'Kaydediliyor...' : 'Ayarları Kaydet'}
+      </button>
     </div>
   );
 }
