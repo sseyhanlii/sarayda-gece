@@ -16,9 +16,9 @@ const PHASE = {
   RESULTS: 'RESULTS',
 };
 
-const NIGHT_DURATION_MS = 45_000;
-const DISCUSSION_DURATION_MS = 90_000;
-const VOTE_DURATION_MS = 30_000;
+const NIGHT_DURATION_MS = 15_000;
+const DISCUSSION_DURATION_MS = 40_000;
+const VOTE_DURATION_MS = 15_000;
 const PENDING_EXECUTION_DURATION_MS = 15_000; // Gizli Prenses'in kartını açması için tanınan süre
 
 class GameRoom {
@@ -63,7 +63,17 @@ class GameRoom {
     }
     if (this.players.length >= this.roomSize) throw new Error('Oda dolu.');
     if (!this.hostUserId) this.hostUserId = userId;
-    this.players.push({ userId, username, socketId, avatarEmoji, avatarUrl, role: null, team: null, isAlive: true });
+    this.players.push({
+      userId,
+      username,
+      socketId,
+      avatarEmoji,
+      avatarUrl,
+      role: null,
+      team: null,
+      isAlive: true,
+      isReady: false, // "Hazırım" mekaniği: hem ilk başlangıçta hem tur sonrası yeni tur için kullanılır
+    });
     return this.getPublicState();
   }
 
@@ -85,10 +95,12 @@ class GameRoom {
     return { ok: true, kickedSocketId: target.socketId };
   }
 
-  // Host, aktif bir maçı erken bitirip odayı lobiye döndürebilir (oyuncular kalır, roller sıfırlanır).
-  abortGame(requesterUserId) {
-    if (requesterUserId !== this.hostUserId) return { ok: false, reason: 'Sadece oda kurucusu oyunu sıfırlayabilir.' };
-    if (this.phase === PHASE.LOBBY) return { ok: false, reason: 'Oyun zaten başlamadı.' };
+  // Ortak sıfırlama mantığı: hem host'un erken bitirmesinde (abortGame) hem de
+  // bir maç bitip herkes yeniden "Hazırım" dediğinde (setReady) kullanılır.
+  // clearReady=false verilirse oyuncuların hazır durumu KORUNUR — bu, sonuç
+  // ekranından direkt yeni bir tura geçerken (herkes zaten hazır demişken)
+  // tekrar tek tek hazır basmalarını istemememiz için.
+  _resetRoundState(clearReady) {
     clearTimeout(this.timer);
     this.phase = PHASE.LOBBY;
     this.dayNumber = 0;
@@ -106,13 +118,53 @@ class GameRoom {
       p.role = null;
       p.team = null;
       p.isAlive = true;
+      if (clearReady) p.isReady = false;
     });
+  }
+
+  // Host, aktif bir maçı erken bitirip odayı lobiye döndürebilir (oyuncular kalır, roller sıfırlanır).
+  abortGame(requesterUserId) {
+    if (requesterUserId !== this.hostUserId) return { ok: false, reason: 'Sadece oda kurucusu oyunu sıfırlayabilir.' };
+    if (this.phase === PHASE.LOBBY) return { ok: false, reason: 'Oyun zaten başlamadı.' };
+    this._resetRoundState(true);
+    return { ok: true };
+  }
+
+  // Oyuncu "Hazırım" durumunu değiştirir. Lobide (ilk başlangıç için) ve
+  // sonuç ekranında (bir sonraki tura geçmek için) kullanılabilir. Sonuç
+  // ekranındayken oda tamsa ve herkes hazırsa, oda LOBİYE KAPANMADAN otomatik
+  // olarak yeni bir tur başlatılır — "oyun bitince lobi kapanmasın, herkes
+  // hazıra basarsa devam edebilsin" isteğine karşılık gelir.
+  setReady(userId, isReady) {
+    if (this.phase !== PHASE.LOBBY && this.phase !== PHASE.RESULTS) {
+      return { ok: false, reason: 'Şu an hazır durumu değiştirilemez.' };
+    }
+    const player = this.players.find((p) => p.userId === userId);
+    if (!player) return { ok: false, reason: 'Bu odada değilsin.' };
+    player.isReady = Boolean(isReady);
+
+    if (
+      this.phase === PHASE.RESULTS &&
+      this.players.length === this.roomSize &&
+      this.players.every((p) => p.isReady)
+    ) {
+      this._resetRoundState(false); // hazır durumları koru, direkt yeni tura geç
+      try {
+        this.startGame();
+        return { ok: true, newRoundStarted: true };
+      } catch (err) {
+        return { ok: true };
+      }
+    }
     return { ok: true };
   }
 
   startGame() {
     if (this.players.length !== this.roomSize) {
       throw new Error(`Oyun için ${this.roomSize} oyuncu gerekli.`);
+    }
+    if (this.players.some((p) => !p.isReady)) {
+      throw new Error('Tüm oyuncuların "Hazırım" demesi gerekiyor.');
     }
     this.players = assignRoles(this.players, this.roomSize);
     this.dayNumber = 1;
@@ -283,6 +335,15 @@ class GameRoom {
   castVote(voterUserId, targetUserId) {
     const voter = this.players.find((p) => p.userId === voterUserId && p.isAlive);
     if (!voter || this.phase !== PHASE.DAY_VOTE) return { ok: false, reason: 'Geçersiz istek.' };
+    // İstemci tarafı zaten sadece hayatta olanları listeliyor, ama sunucu
+    // tarafında da doğrulamadan asla emin olamayız (bkz. proje genelindeki
+    // "istemciye güvenme" ilkesi) — ölü bir oyuncuya oy verilmesini engelle.
+    if (targetUserId) {
+      const target = this.players.find((p) => p.userId === targetUserId);
+      if (!target || !target.isAlive) {
+        return { ok: false, reason: 'Ölmüş bir oyuncuya oy veremezsin.' };
+      }
+    }
     this.votes[voterUserId] = targetUserId || null; // null = çekimser
     this.io.to(this.roomCode).emit('voteUpdate', { votes: this._tallyVotes() });
     return { ok: true };
@@ -453,6 +514,7 @@ class GameRoom {
         avatarEmoji: p.avatarEmoji,
         avatarUrl: p.avatarUrl || null,
         isAlive: p.isAlive,
+        isReady: Boolean(p.isReady),
       })),
     };
   }

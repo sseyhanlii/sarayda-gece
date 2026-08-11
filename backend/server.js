@@ -588,6 +588,18 @@ io.on('connection', (socket) => {
     io.to(socket.data.roomCode).emit('roomUpdate', room.getPublicState());
   });
 
+  // ---- HAZIRIM (ilk başlangıç ve tur sonrası devam için) ----
+  socket.on('setReady', ({ isReady } = {}) => {
+    const room = activeRooms.get(socket.data.roomCode);
+    if (!room) return;
+    const result = room.setReady(userId, isReady);
+    if (!result.ok) return socket.emit('error', { message: result.reason });
+    io.to(socket.data.roomCode).emit('roomUpdate', room.getPublicState());
+    if (result.newRoundStarted) {
+      io.to(socket.data.roomCode).emit('voicePhaseChanged', { phase: 'NIGHT' });
+    }
+  });
+
   socket.on('startGame', () => {
     const room = activeRooms.get(socket.data.roomCode);
     if (!room) return;
