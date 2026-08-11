@@ -125,6 +125,22 @@ async function adminMiddleware(req, res, next) {
   next();
 }
 
+// Baş yönetici (owner): TEK hesap, sınırsız yetki (admin atama/geri alma, hesap
+// silme). Normal admin'ler (is_admin=true ama is_owner=false) bu işlemleri
+// YAPAMAZ — "adminin yetenekleri sınırlı kalsın" kararına göre.
+async function ownerMiddleware(req, res, next) {
+  try {
+    req.auth = requireAuth(req);
+  } catch {
+    return res.status(401).json({ error: 'Geçersiz oturum.' });
+  }
+  const result = await pool.query(`SELECT is_owner FROM users WHERE id = $1`, [req.auth.userId]);
+  if (!result.rows[0]?.is_owner) {
+    return res.status(403).json({ error: 'Bu işlem için baş yönetici (owner) yetkisi gerekiyor.' });
+  }
+  next();
+}
+
 // ---------- REST: PROFİL / LİDERLİK TABLOSU ----------
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Sarayda Gece backend çalışıyor.' });
@@ -150,13 +166,38 @@ app.get('/api/leaderboard', async (req, res) => {
   }
 });
 
+// Herkesin görebildiği, ROL BAZLI "en çok kazananlar" sıralaması.
+// Her rol için en çok o rolle kazanmış ilk 5 oyuncuyu döner.
+app.get('/api/leaderboard/by-role', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT prs.role_key, u.username, u.avatar_emoji, u.avatar_url, prs.wins, prs.games_played
+       FROM player_role_stats prs
+       JOIN users u ON u.id = prs.user_id
+       WHERE prs.wins > 0
+       ORDER BY prs.role_key, prs.wins DESC, prs.games_played ASC`
+    );
+    const byRole = {};
+    for (const row of result.rows) {
+      if (!byRole[row.role_key]) byRole[row.role_key] = [];
+      if (byRole[row.role_key].length < 5) byRole[row.role_key].push(row);
+    }
+    res.json(byRole);
+  } catch (err) {
+    console.error('DB hatası (/api/leaderboard/by-role):', err.message);
+    res.status(500).json({ error: 'Veritabanına bağlanılamadı.' });
+  }
+});
+
 // ---------- REST: PROFİL GÖRÜNTÜLEME / DÜZENLEME ----------
 const AVAILABLE_AVATAR_EMOJIS = ['👑', '🗡️', '🛡️', '🔮', '🕯️', '🦉', '🐺', '🌙', '⚜️', '🎭'];
 
 app.get('/api/profile/me', authMiddleware, async (req, res) => {
   try {
     const userResult = await pool.query(
-      `SELECT id, username, email, avatar_emoji, is_admin, created_at FROM users WHERE id = $1`,
+      `SELECT id, username, email, avatar_emoji, avatar_url, avatar_pending_url, avatar_status,
+              is_admin, is_owner, profile_locked, created_at
+       FROM users WHERE id = $1`,
       [req.auth.userId]
     );
     const statsResult = await pool.query(`SELECT * FROM player_stats WHERE user_id = $1`, [req.auth.userId]);
@@ -174,12 +215,16 @@ app.patch('/api/profile/me', authMiddleware, async (req, res) => {
     return res.status(400).json({ error: 'Geçersiz avatar seçimi.' });
   }
   try {
+    const lockCheck = await pool.query(`SELECT profile_locked FROM users WHERE id = $1`, [req.auth.userId]);
+    if (lockCheck.rows[0]?.profile_locked) {
+      return res.status(403).json({ error: 'Bir yönetici profilini (ad/fotoğraf) değiştirmeni kilitledi.' });
+    }
     const result = await pool.query(
       `UPDATE users SET
          username = COALESCE($1, username),
          avatar_emoji = COALESCE($2, avatar_emoji)
        WHERE id = $3
-       RETURNING id, username, email, avatar_emoji, is_admin`,
+       RETURNING id, username, email, avatar_emoji, avatar_url, is_admin`,
       [username || null, avatarEmoji || null, req.auth.userId]
     );
     res.json(result.rows[0]);
@@ -192,6 +237,36 @@ app.patch('/api/profile/me', authMiddleware, async (req, res) => {
 
 app.get('/api/profile/avatars', (req, res) => {
   res.json({ avatars: AVAILABLE_AVATAR_EMOJIS });
+});
+
+// Kullanıcı kendi fotoğrafını yükler — DOĞRUDAN canlı olmaz, admin onayı bekler.
+// Ayrı bir dosya depolama servisi kurmamak için resim base64 "data URI" olarak
+// doğrudan veritabanına yazılıyor; bu yüzden boyutu küçük tutmak ZORUNLU
+// (istemci tarafında küçültülüp gönderiliyor, burada da sunucu tarafında
+// ekstra bir güvenlik sınırı olarak tekrar kontrol ediliyor).
+const MAX_AVATAR_DATA_URL_LENGTH = 350_000; // ~250KB ham veri (base64 şişmesi dahil)
+app.post('/api/profile/avatar', authMiddleware, async (req, res) => {
+  const { imageDataUrl } = req.body;
+  if (!imageDataUrl || typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:image/')) {
+    return res.status(400).json({ error: 'Geçersiz resim verisi.' });
+  }
+  if (imageDataUrl.length > MAX_AVATAR_DATA_URL_LENGTH) {
+    return res.status(400).json({ error: 'Resim çok büyük. Lütfen daha küçük bir fotoğraf seç.' });
+  }
+  try {
+    const lockCheck = await pool.query(`SELECT profile_locked FROM users WHERE id = $1`, [req.auth.userId]);
+    if (lockCheck.rows[0]?.profile_locked) {
+      return res.status(403).json({ error: 'Bir yönetici profilini (ad/fotoğraf) değiştirmeni kilitledi.' });
+    }
+    await pool.query(
+      `UPDATE users SET avatar_pending_url = $1, avatar_status = 'PENDING' WHERE id = $2`,
+      [imageDataUrl, req.auth.userId]
+    );
+    res.json({ ok: true, status: 'PENDING' });
+  } catch (err) {
+    console.error('DB hatası (POST /api/profile/avatar):', err.message);
+    res.status(500).json({ error: 'Yükleme başarısız.' });
+  }
 });
 
 // ---------- REST: SESLİ SOHBET (AGORA TOKEN ÜRETİMİ) ----------
@@ -230,7 +305,8 @@ app.get('/api/voice/token', authMiddleware, (req, res) => {
 app.get('/api/admin/users', adminMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.username, u.email, u.is_admin, u.is_banned, u.created_at,
+      `SELECT u.id, u.username, u.email, u.is_admin, u.is_owner, u.is_banned, u.profile_locked,
+              u.avatar_status, u.created_at,
               ps.total_games, ps.total_wins, ps.total_score
        FROM users u
        LEFT JOIN player_stats ps ON ps.user_id = u.id
@@ -252,6 +328,94 @@ app.post('/api/admin/users/:userId/ban', adminMiddleware, async (req, res) => {
   } catch (err) {
     console.error('DB hatası (POST /api/admin/users/:userId/ban):', err.message);
     res.status(500).json({ error: 'Güncelleme başarısız.' });
+  }
+});
+
+// Fotoğraf/isim yasağı: kullanıcı kendi profilini (ad + avatar) değiştiremesin.
+app.post('/api/admin/users/:userId/profile-lock', adminMiddleware, async (req, res) => {
+  const { locked } = req.body;
+  try {
+    await pool.query(`UPDATE users SET profile_locked = $1 WHERE id = $2`, [Boolean(locked), req.params.userId]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DB hatası (POST /api/admin/users/:userId/profile-lock):', err.message);
+    res.status(500).json({ error: 'Güncelleme başarısız.' });
+  }
+});
+
+// SADECE owner: bir kullanıcıyı admin yapabilir / admin'likten alabilir.
+// Owner'ın kendisi bu yoldan değiştirilemez (yanlışlıkla kendi yetkisini
+// düşürmesin, ya da başka biri owner'ı admin'likten atamasın).
+app.post('/api/admin/users/:userId/promote', ownerMiddleware, async (req, res) => {
+  const { isAdmin } = req.body;
+  try {
+    const target = await pool.query(`SELECT is_owner FROM users WHERE id = $1`, [req.params.userId]);
+    if (!target.rows[0]) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
+    if (target.rows[0].is_owner) {
+      return res.status(400).json({ error: 'Baş yöneticinin admin durumu buradan değiştirilemez.' });
+    }
+    await pool.query(`UPDATE users SET is_admin = $1 WHERE id = $2`, [Boolean(isAdmin), req.params.userId]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DB hatası (POST /api/admin/users/:userId/promote):', err.message);
+    res.status(500).json({ error: 'Güncelleme başarısız.' });
+  }
+});
+
+// SADECE owner: hesabı KALICI olarak sil. Geçmiş maç kayıtları bozulmasın diye
+// game_players/games/game_events/game_votes'taki referanslar NULL'a düşer
+// (bkz. schema_v3_migration.sql), sadece kullanıcıya özel veriler (player_stats,
+// player_role_stats) CASCADE ile silinir.
+app.delete('/api/admin/users/:userId', ownerMiddleware, async (req, res) => {
+  try {
+    const target = await pool.query(`SELECT is_owner FROM users WHERE id = $1`, [req.params.userId]);
+    if (!target.rows[0]) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
+    if (target.rows[0].is_owner) return res.status(400).json({ error: 'Baş yönetici hesabı silinemez.' });
+    await pool.query(`DELETE FROM users WHERE id = $1`, [req.params.userId]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DB hatası (DELETE /api/admin/users/:userId):', err.message);
+    res.status(500).json({ error: 'Silme başarısız.' });
+  }
+});
+
+// Bekleyen (admin onayı istenen) profil fotoğrafları.
+app.get('/api/admin/avatars/pending', adminMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, username, avatar_pending_url, avatar_status
+       FROM users WHERE avatar_status = 'PENDING'
+       ORDER BY created_at ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('DB hatası (/api/admin/avatars/pending):', err.message);
+    res.status(500).json({ error: 'Veritabanına bağlanılamadı.' });
+  }
+});
+
+app.post('/api/admin/avatars/:userId/review', adminMiddleware, async (req, res) => {
+  const { approve } = req.body;
+  try {
+    if (approve) {
+      await pool.query(
+        `UPDATE users
+         SET avatar_url = avatar_pending_url,
+             avatar_status = 'APPROVED',
+             avatar_pending_url = NULL
+         WHERE id = $1`,
+        [req.params.userId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE users SET avatar_status = 'REJECTED', avatar_pending_url = NULL WHERE id = $1`,
+        [req.params.userId]
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DB hatası (POST /api/admin/avatars/:userId/review):', err.message);
+    res.status(500).json({ error: 'İşlem başarısız.' });
   }
 });
 
@@ -298,13 +462,22 @@ io.use(async (socket, next) => {
     const decoded = jwt.verify(token, JWT_SECRET); // { userId, username }
     // Kullanıcı adını/avatarını JWT'deki (girişteki) haliyle değil, DB'deki
     // GÜNCEL haliyle kullan — profilini düzenlediyse oyun içinde eski adı
-    // görünmesin. Aynı sorguda ban durumu da kontrol edilir.
-    const result = await pool.query(`SELECT username, avatar_emoji, is_banned FROM users WHERE id = $1`, [
-      decoded.userId,
-    ]);
+    // görünmesin. Aynı sorguda ban durumu ve admin yetkisi de kontrol edilir
+    // (admin yetkisi burada okunuyor ki "oda dolu olsa da gizlice izleme"
+    // özelliği için istemciye güvenmeden sunucu tarafında doğrulayabilelim).
+    const result = await pool.query(
+      `SELECT username, avatar_emoji, avatar_url, is_banned, is_admin FROM users WHERE id = $1`,
+      [decoded.userId]
+    );
     const row = result.rows[0];
     if (!row || row.is_banned) return next(new Error('unauthorized'));
-    socket.user = { userId: decoded.userId, username: row.username, avatarEmoji: row.avatar_emoji };
+    socket.user = {
+      userId: decoded.userId,
+      username: row.username,
+      avatarEmoji: row.avatar_emoji,
+      avatarUrl: row.avatar_url,
+      isAdmin: row.is_admin,
+    };
     next();
   } catch {
     next(new Error('unauthorized'));
@@ -312,7 +485,7 @@ io.use(async (socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  const { userId, username, avatarEmoji } = socket.user;
+  const { userId, username, avatarEmoji, avatarUrl, isAdmin } = socket.user;
 
   // ---- LOBİ ----
   socket.on('createRoom', ({ roomSize } = {}) => {
@@ -322,7 +495,7 @@ io.on('connection', (socket) => {
       persistGameResult(finishedRoom).catch((err) => console.error('persistGameResult hata:', err));
     });
     activeRooms.set(roomCode, room);
-    room.addPlayer(userId, username, socket.id, avatarEmoji);
+    room.addPlayer(userId, username, socket.id, avatarEmoji, avatarUrl);
     socket.join(roomCode);
     socket.data.roomCode = roomCode;
     io.to(roomCode).emit('roomUpdate', room.getPublicState());
@@ -331,14 +504,57 @@ io.on('connection', (socket) => {
   socket.on('joinRoom', ({ roomCode }) => {
     const room = activeRooms.get(roomCode);
     if (!room) return socket.emit('error', { message: 'Oda bulunamadı.' });
-    if (room.phase !== PHASE.LOBBY) return socket.emit('error', { message: 'Oyun zaten başladı.' });
+    // ÖNEMLİ: Oyun başladıktan sonra YENİ bir oyuncunun katılmasını engelliyoruz,
+    // ama zaten bu odada rolü olan bir oyuncunun (sayfa yenileme, bağlantı kopması,
+    // sekme kapat-aç) YENİDEN katılmasına İZİN VERMELİYİZ — aksi halde oyuncunun
+    // socketId'si bayatlar ve sunucudan ona özel gönderilen her şey (Baş Casus'un
+    // sorgu sonucu, Gölge Lider'in "Gubiş mi?" cevabı, rol bilgisi vb.) sonsuza
+    // kadar boşluğa gider. Bu, "bazı roller çalışmıyor" şikayetinin gerçek nedeniydi.
+    const isExistingPlayer = room.players.some((p) => p.userId === userId);
+    if (room.phase !== PHASE.LOBBY && !isExistingPlayer) {
+      return socket.emit('error', { message: 'Oyun zaten başladı.' });
+    }
     try {
-      room.addPlayer(userId, username, socket.id, avatarEmoji);
+      room.addPlayer(userId, username, socket.id, avatarEmoji, avatarUrl);
       socket.join(roomCode);
       socket.data.roomCode = roomCode;
       io.to(roomCode).emit('roomUpdate', room.getPublicState());
+
+      // Reconnect: oyuncuya kendi rolünü ve mevcut fazı tekrar gönder,
+      // aksi halde sayfa yenilendiğinde ekranı "rolsüz" kalır.
+      if (room.phase !== PHASE.LOBBY) {
+        const player = room.players.find((p) => p.userId === userId);
+        if (player?.role) {
+          socket.emit('gameStarted', { yourRole: player.role, team: player.team });
+        }
+        socket.emit('phaseChanged', { phase: room.phase, dayNumber: room.dayNumber });
+      }
     } catch (err) {
       socket.emit('error', { message: err.message });
+    }
+  });
+
+  // ---- YÖNETİCİ: oda dolu olsa/oyun başlamış olsa bile GİZLİCE izleme ----
+  // Sadece is_admin=true hesaplar kullanabilir (server tarafında doğrulanır,
+  // istemci beyanına güvenilmez). Admin, koltuk almaz — players listesine
+  // eklenmez, oda kapasitesini etkilemez, kimseye görünmez. Sadece herkesin
+  // gördüğü genel yayınları (oturma düzeni, faz, ölümler, gündüz sohbeti) alır;
+  // oyuncuların özel gece aksiyonu sonuçlarını GÖRMEZ.
+  socket.on('adminSpectateRoom', ({ roomCode }) => {
+    if (!isAdmin) return socket.emit('error', { message: 'Yetkisiz.' });
+    const room = activeRooms.get(roomCode);
+    if (!room) return socket.emit('error', { message: 'Oda bulunamadı.' });
+    socket.join(roomCode);
+    socket.data.spectateRoomCode = roomCode;
+    socket.emit('roomUpdate', room.getPublicState());
+    socket.emit('phaseChanged', { phase: room.phase, dayNumber: room.dayNumber });
+    socket.emit('adminSpectateJoined', { roomCode });
+  });
+
+  socket.on('adminLeaveSpectate', () => {
+    if (socket.data.spectateRoomCode) {
+      socket.leave(socket.data.spectateRoomCode);
+      socket.data.spectateRoomCode = null;
     }
   });
 
@@ -415,6 +631,14 @@ io.on('connection', (socket) => {
     if (!result.ok) socket.emit('error', { message: result.reason });
   });
 
+  // ---- YAZILI SOHBET ----
+  socket.on('sendChatMessage', ({ text }) => {
+    const room = activeRooms.get(socket.data.roomCode);
+    if (!room) return;
+    const result = room.sendChatMessage(userId, username, text);
+    if (!result.ok) socket.emit('error', { message: result.reason });
+  });
+
   // ---- BAĞLANTI KOPMASI ----
   socket.on('disconnect', () => {
     const room = activeRooms.get(socket.data.roomCode);
@@ -448,17 +672,55 @@ async function persistGameResult(gameRoom) {
       // tablosundaki UNIQUE(game_id, seat_number) kısıtını karşılayan benzersiz
       // bir indeks olarak kullanılıyor.
       await client.query(
-        `INSERT INTO game_players (game_id, user_id, seat_number, role_key, is_alive, score_delta)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [gameId, scoreEntry.userId, i, scoreEntry.role, Boolean(player?.isAlive), scoreEntry.points]
+        `INSERT INTO game_players (game_id, user_id, seat_number, role_key, is_alive, died_on_day, died_cause, score_delta)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [
+          gameId,
+          scoreEntry.userId,
+          i,
+          scoreEntry.role,
+          Boolean(player?.isAlive),
+          player?.diedOnDay ?? null,
+          player?.diedCause ?? null,
+          scoreEntry.points,
+        ]
       );
+
+      // Genel istatistikler: kazanma/kaybetme sayısı ve galibiyet serisi artık
+      // gerçekten güncelleniyor (önceden sadece total_games/total_score işleniyordu).
+      if (scoreEntry.isWinner) {
+        await client.query(
+          `UPDATE player_stats
+           SET total_games = total_games + 1,
+               total_score = total_score + $2,
+               total_wins = total_wins + 1,
+               current_win_streak = current_win_streak + 1,
+               best_win_streak = GREATEST(best_win_streak, current_win_streak + 1),
+               updated_at = now()
+           WHERE user_id = $1`,
+          [scoreEntry.userId, scoreEntry.points]
+        );
+      } else {
+        await client.query(
+          `UPDATE player_stats
+           SET total_games = total_games + 1,
+               total_score = total_score + $2,
+               total_losses = total_losses + 1,
+               current_win_streak = 0,
+               updated_at = now()
+           WHERE user_id = $1`,
+          [scoreEntry.userId, scoreEntry.points]
+        );
+      }
+
+      // Rol bazlı istatistik: "rollere göre en çok kazananlar" sıralaması bu tablodan gelir.
       await client.query(
-        `UPDATE player_stats
-         SET total_games = total_games + 1,
-             total_score = total_score + $2,
-             updated_at = now()
-         WHERE user_id = $1`,
-        [scoreEntry.userId, scoreEntry.points]
+        `INSERT INTO player_role_stats (user_id, role_key, games_played, wins)
+         VALUES ($1, $2, 1, $3)
+         ON CONFLICT (user_id, role_key)
+         DO UPDATE SET games_played = player_role_stats.games_played + 1,
+                       wins = player_role_stats.wins + EXCLUDED.wins`,
+        [scoreEntry.userId, scoreEntry.role, scoreEntry.isWinner ? 1 : 0]
       );
     }
     await client.query('COMMIT');

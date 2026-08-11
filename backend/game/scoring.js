@@ -57,7 +57,7 @@ function calculateMatchScores(gameRoom) {
     const multiplier = ROLE_MULTIPLIER[player.role] ?? 1.0;
     const points = Math.round(rawTotal * multiplier);
 
-    return { userId: player.userId, role: player.role, points, breakdown, multiplier };
+    return { userId: player.userId, role: player.role, points, breakdown, multiplier, isWinner };
   });
 }
 

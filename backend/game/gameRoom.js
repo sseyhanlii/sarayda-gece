@@ -48,19 +48,22 @@ class GameRoom {
   }
 
   // ---------- LOBİ ----------
-  addPlayer(userId, username, socketId, avatarEmoji = '👤') {
+  addPlayer(userId, username, socketId, avatarEmoji = '👤', avatarUrl = null) {
     // Aynı kullanıcı zaten odadaysa (örn. lobi sayfasından oda sayfasına geçişte
-    // ikinci bir 'joinRoom' tetiklenmesi ya da sayfa yenileme) yinelenen koltuk
-    // açmak yerine sadece socket bağlantısını güncelle.
+    // ikinci bir 'joinRoom' tetiklenmesi, sayfa yenileme ya da bağlantı kopup
+    // yeniden bağlanma) yinelenen koltuk açmak yerine sadece socket bağlantısını
+    // güncelle — bu, reconnect sonrası özel (hedefli) sunucu mesajlarının
+    // (Baş Casus sonucu, rol bilgisi vb.) doğru socket'e ulaşmasını sağlar.
     const existing = this.players.find((p) => p.userId === userId);
     if (existing) {
       existing.socketId = socketId;
       existing.avatarEmoji = avatarEmoji;
+      existing.avatarUrl = avatarUrl;
       return this.getPublicState();
     }
     if (this.players.length >= this.roomSize) throw new Error('Oda dolu.');
     if (!this.hostUserId) this.hostUserId = userId;
-    this.players.push({ userId, username, socketId, avatarEmoji, role: null, team: null, isAlive: true });
+    this.players.push({ userId, username, socketId, avatarEmoji, avatarUrl, role: null, team: null, isAlive: true });
     return this.getPublicState();
   }
 
@@ -135,6 +138,22 @@ class GameRoom {
   submitNightAction(userId, abilityKey, targetUserId) {
     const actor = this.players.find((p) => p.userId === userId && p.isAlive);
     if (!actor || this.phase !== PHASE.NIGHT) return { ok: false, reason: 'Geçersiz istek.' };
+
+    // ÖNEMLİ GÜVENLİK KONTROLÜ: istemci hangi yeteneği kullandığını kendi
+    // beyan ediyor (abilityKey) — sunucu bunu KÖRÜ KÖRÜNE kabul ederse,
+    // (örn. tarayıcı konsolundan) gerçekte o role sahip olmayan bir oyuncu
+    // başka bir rolün yeteneğini tetikleyebilir. Her ability'nin gerçekten
+    // o role ait olduğunu burada doğruluyoruz — proje genelinde zaten
+    // benimsenen "istemciye güvenme" ilkesiyle (bkz. adminMiddleware) aynı mantık.
+    const REQUIRED_ROLE = {
+      GUARD_PROTECT: ROLE.MUHAFIZ,
+      SPY_INVESTIGATE: ROLE.BAS_CASUS,
+      ASSASSIN_CHOOSE_TARGET: ROLE.GOLGE_LIDER,
+      POISONER_LOCK_ABILITY: ROLE.ZEHIRBAZ,
+    };
+    if (REQUIRED_ROLE[abilityKey] && actor.role !== REQUIRED_ROLE[abilityKey]) {
+      return { ok: false, reason: 'Bu yetenek senin rolüne ait değil.' };
+    }
 
     // Zehirbaz tarafından kilitlenmiş oyuncu aksiyon gönderemez
     if (this.nightActions.lockedRole === actor.role) {
@@ -380,6 +399,35 @@ class GameRoom {
     }
   }
 
+  // ---------- YAZILI SOHBET ----------
+  // Sesli sohbetle aynı mantık: gündüz herkes birbirine yazar, gece ise
+  // sadece suikastçılar kendi gizli kanallarında birbirine yazabilir.
+  sendChatMessage(userId, username, text) {
+    const trimmed = String(text || '').slice(0, 500).trim();
+    if (!trimmed) return { ok: false, reason: 'Boş mesaj gönderilemez.' };
+    const sender = this.players.find((p) => p.userId === userId);
+    if (!sender) return { ok: false, reason: 'Bu odada değilsin.' };
+
+    const isNight = this.phase === PHASE.NIGHT;
+    const isAssassin = sender.team === TEAM.SUIKASTCILAR;
+    const payload = {
+      userId,
+      username,
+      text: trimmed,
+      channel: isNight ? 'night' : 'day',
+    };
+
+    if (isNight) {
+      if (!isAssassin) return { ok: false, reason: 'Gece genel sohbet kapalı — sadece suikastçılar gizli kanalda yazabilir.' };
+      this.players
+        .filter((p) => p.team === TEAM.SUIKASTCILAR)
+        .forEach((p) => this.io.to(p.socketId).emit('chatMessage', payload));
+    } else {
+      this.io.to(this.roomCode).emit('chatMessage', payload);
+    }
+    return { ok: true };
+  }
+
   // ---------- YARDIMCILAR ----------
   _broadcastPhase() {
     this.io.to(this.roomCode).emit('phaseChanged', {
@@ -403,6 +451,7 @@ class GameRoom {
         userId: p.userId,
         username: p.username,
         avatarEmoji: p.avatarEmoji,
+        avatarUrl: p.avatarUrl || null,
         isAlive: p.isAlive,
       })),
     };

@@ -9,10 +9,14 @@ CREATE TABLE users (
     username        VARCHAR(24)  UNIQUE NOT NULL,
     email           VARCHAR(255) UNIQUE NOT NULL,
     password_hash   TEXT NOT NULL,          -- bcrypt hash
-    avatar_url      TEXT,
+    avatar_url      TEXT,                   -- onaylanmış/canlı avatar (emoji ya da yüklenen fotoğraf, data URI)
     avatar_emoji    VARCHAR(8) DEFAULT '👤', -- basit emoji avatar (dosya yükleme altyapısı gerektirmez)
+    avatar_pending_url TEXT,                 -- kullanıcının yüklediği, henüz admin onayı bekleyen fotoğraf
+    avatar_status   VARCHAR(16) NOT NULL DEFAULT 'NONE', -- NONE | PENDING | APPROVED | REJECTED
     is_admin        BOOLEAN NOT NULL DEFAULT FALSE, -- site geneli admin paneline erişim
+    is_owner        BOOLEAN NOT NULL DEFAULT FALSE, -- tek hesap: sınırsız yetki (admin atama/silme dahil)
     is_banned       BOOLEAN NOT NULL DEFAULT FALSE, -- true ise giriş engellenir
+    profile_locked  BOOLEAN NOT NULL DEFAULT FALSE, -- true ise kullanıcı ad/avatarını kendi değiştiremez
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at   TIMESTAMPTZ
 );
@@ -47,7 +51,7 @@ CREATE TYPE game_phase  AS ENUM ('LOBBY','NIGHT','DAY_DISCUSSION','DAY_VOTE','EX
 CREATE TABLE games (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     room_code       VARCHAR(8) UNIQUE NOT NULL,     -- örn. "X7K9P2"
-    host_user_id    UUID REFERENCES users(id),
+    host_user_id    UUID REFERENCES users(id) ON DELETE SET NULL,
     status          game_status NOT NULL DEFAULT 'LOBBY',
     current_phase   game_phase  NOT NULL DEFAULT 'LOBBY',
     day_number      INTEGER NOT NULL DEFAULT 0,
@@ -61,7 +65,7 @@ CREATE TABLE games (
 CREATE TABLE game_players (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     game_id         UUID NOT NULL REFERENCES games(id) ON DELETE CASCADE,
-    user_id         UUID NOT NULL REFERENCES users(id),
+    user_id         UUID REFERENCES users(id) ON DELETE SET NULL, -- hesap silinirse NULL'a düşer, kayıt kalır
     seat_number     SMALLINT NOT NULL,              -- 1-8
     role_key        VARCHAR(32) NOT NULL,
     is_alive        BOOLEAN NOT NULL DEFAULT TRUE,
@@ -78,8 +82,8 @@ CREATE TABLE game_events (
     day_number  INTEGER NOT NULL,
     phase       game_phase NOT NULL,
     event_type  VARCHAR(32) NOT NULL,   -- 'ABILITY_USED','VOTE_CAST','EXECUTION','DEATH','PRINCESS_REVEAL'
-    actor_id    UUID REFERENCES users(id),
-    target_id   UUID REFERENCES users(id),
+    actor_id    UUID REFERENCES users(id) ON DELETE SET NULL,
+    target_id   UUID REFERENCES users(id) ON DELETE SET NULL,
     payload     JSONB,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -89,8 +93,8 @@ CREATE TABLE game_votes (
     id          BIGSERIAL PRIMARY KEY,
     game_id     UUID NOT NULL REFERENCES games(id) ON DELETE CASCADE,
     day_number  INTEGER NOT NULL,
-    voter_id    UUID NOT NULL REFERENCES users(id),
-    target_id   UUID REFERENCES users(id),   -- null = çekimser
+    voter_id    UUID REFERENCES users(id) ON DELETE SET NULL,
+    target_id   UUID REFERENCES users(id) ON DELETE SET NULL,   -- null = çekimser
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (game_id, day_number, voter_id)
 );
